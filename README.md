@@ -23,5 +23,7 @@ Key steps include:
 
 ## Running the analysis
 
+Please ensure that all required files are located in the working directory.
+ 
 ```r
 source("main.R")
