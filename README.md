@@ -15,6 +15,7 @@ Key steps include:
 
 ## Files
 
+- `survival_tse.rds`: Contains the preprocessed TreeSummarizedExperiment (TSE) object used in the survival analysis.
 - `data.R`: Loads and preprocesses microbiome and survival data.
 - `model.R`: Fits a Bayesian Cox model using selected microbial predictors.
 - `survival.qmd`: Generates the final report (Quarto).
