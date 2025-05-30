@@ -23,7 +23,7 @@ Key steps include:
 
 ## How to use
 
-Please ensure that all required files are located in the working directory.
+Please ensure that all required files are located in the working directory. And then run the following code in R:
  
 ```r
 source("main.R")
