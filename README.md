@@ -21,7 +21,7 @@ Key steps include:
 - `survival.qmd`: Generates the final report (Quarto).
 - `main.R`: Wrapper script to execute all of the above in correct order.
 
-## Running the analysis
+## How to use
 
 Please ensure that all required files are located in the working directory.
  
