@@ -12,6 +12,7 @@ Key steps include:
 - Model fitting with censored survival data
 - Posterior summarization and interpretation of hazard ratios
 - Visualization of survival using Kaplan–Meier curves
+- Probabilistic survival estimation using the Imprecise Dirichlet Process (IDP)
 
 ## Files
 
