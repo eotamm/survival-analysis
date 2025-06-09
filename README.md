@@ -13,7 +13,7 @@ Key steps include:
 - Posterior summarization and interpretation of hazard ratios
 - Visualization of survival using Kaplan–Meier curves
 - Probabilistic survival estimation using the Imprecise Dirichlet Process (IDP)
-- Construction of log-ratio features from CLR and rCLR transformations and comparing them
+- Construction of log-ratio features from LRA, CLR and rCLR transformations and comparing them
 
 ## Files
 
