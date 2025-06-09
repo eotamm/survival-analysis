@@ -13,12 +13,14 @@ Key steps include:
 - Posterior summarization and interpretation of hazard ratios
 - Visualization of survival using Kaplan–Meier curves
 - Probabilistic survival estimation using the Imprecise Dirichlet Process (IDP)
+- Construction of log-ratio features from CLR and rCLR transformations and comparing them
 
 ## Files
 
 - `survival_tse.rds`: Contains the preprocessed TreeSummarizedExperiment (TSE) object used in the survival analysis.
 - `data.R`: Loads and preprocesses microbiome and survival data.
 - `model.R`: Fits a Bayesian Cox model using selected microbial predictors.
+- `funcs.R`: Defines reusable functions for data transformation, log-ratio construction and model fitting
 - `survival.qmd`: Generates the final report (Quarto).
 - `main.R`: Wrapper script to execute all of the above in correct order.
 
