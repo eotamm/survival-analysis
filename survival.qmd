@@ -1,7 +1,18 @@
 ---
 title: "Survivalanalysis using probabilistic models"
-format: html
+format: 
+  html: default
+  md: 
+    variant: gfm
+    preserve-tabs: true
+    wrap: preserve
+    fig-width: 6
+    fig-height: 4
 editor: visual
+execute: 
+  echo: true
+  warning: false
+  message: false
 ---
 
 # Introduction
@@ -24,6 +35,7 @@ library(vegan)
 library(mia)
 library(bayesboot)
 library(IDPSurvival)
+library(cmdstanr)
 ```
 
 
@@ -113,16 +125,16 @@ Hazard ratios below 1 (to the left of the dashed line) are associated with a red
 # Survival curves
 ## Kaplan-Meier curve
 
-A fully probabilistic  approach to modeling the survival curve is not used yet, as its implementation is technically complex and not readily supported by standard R packages. Instead, the classical Kaplan–Meier estimator is applied to provide a robust and interpretable nonparametric summary of cumulative mortality over time.
+First classical Kaplan–Meier estimator is applied to provide a robust and interpretable nonparametric summary of cumulative mortality over time.
 
 ```{r}
 # Fit Kaplan-Meier survival model
-surv_fit <- survfit(Surv(Event_time, Event) ~ 1, data = dff)
+surv_fit <- survfit(Surv(Event_time, Event) ~ 1, data = df)
 
 # Plot cumulative mortality curve
 ggsurvplot(
   surv_fit,
-  data = dff,
+  data = df,
   conf.int = TRUE,
   fun = "event",  
   palette = "blue",
@@ -142,10 +154,10 @@ We now estimate a probabilistic survival curve using the `isurvfit()` function f
 
 ```{r}
 # Create the Surv object
-surv_obj <- Surv(time = dff$Event_time, event = dff$Event)
+surv_obj <- Surv(time = df$Event_time, event = df$Event)
 
 # Estimate the IDP survival curve
-fit <- isurvfit(surv_obj ~ 1, data = dff, s = 1, 
+fit <- isurvfit(surv_obj ~ 1, data = df, s = 1, 
                 conf.type = "exact", nsamples = 2000, display = FALSE)
 
 # Plot the survival curve
@@ -167,10 +179,10 @@ To better understand the differences between classical and probabilistic surviva
 
 ```{r}
 # Fit the classical Kaplan–Meier survival model
-km_fit <- survfit(Surv(Event_time, Event) ~ 1, data = dff)
+km_fit <- survfit(Surv(Event_time, Event) ~ 1, data = df)
 
 # Fit the probabilistic IDP survival model (s = 1)
-idp_fit <- isurvfit(Surv(Event_time, Event) ~ 1, data = dff, s = 1,
+idp_fit <- isurvfit(Surv(Event_time, Event) ~ 1, data = df, s = 1,
                     conf.type = "exact", nsamples = 2000, display = FALSE)
 
 # Prepare Kaplan–Meier survival curve data
@@ -214,40 +226,37 @@ The point estimates from the IDP and Kaplan–Meier methods are very similar, bu
 
 # Comparison of CLR, rCLR, and Log-Relative-Abundance Transformations Using Microbial Log-Ratio Features in Survival Analysis
 
-To evaluate the impact of compositional preprocessing choices, we compare three common transformations: centered log-ratio (CLR), robust CLR (rCLR), and log-relative-abundance (LRA). Using the 15 most prevalent microbial taxa, we compute all pairwise log(x/y) ratios as input features for survival modeling.
+To evaluate the impact of compositional preprocessing choices, we compare three common transformations: centered log-ratio (CLR), robust CLR (rCLR), and log-relative-abundance (LRA). Using the 20 most prevalent microbial taxa, we compute all pairwise log(x/y) ratios as input features for survival modeling.
 
 The log(x/y) transformation expresses the relative abundance of one taxon compared to another on a log scale, making the data more statistically appropriate for modeling and removing compositional constraints. These features are used in Bayesian Cox models, and the predictive performance of all three models is compared using leave-one-out cross-validation (LOO).
 
-As a baseline reference, we also include a model using log-transformed absolute abundances (without any ratio transformation) of the same 15 taxa. This provides a point of comparison to assess whether ratio-based features offer an advantage over simpler log-abundance inputs in survival prediction.
+As a baseline reference, we also include a model using log-transformed absolute abundances (without any ratio transformation) of the same 20 taxa. This provides a point of comparison to assess whether ratio-based features offer an advantage over simpler log-abundance inputs in survival prediction.
 
 ```{r, include=FALSE}
 # Load models
-fit_clr_ratios <- readRDS("fit_clr_ratios.rds")
-fit_rclr_ratios <- readRDS("fit_rclr_ratios.rds")
 fit_lra_ratios <- readRDS("fit_lra_ratios.rds")
-fit_abund_top15 <- readRDS("fit_abund_top15.rds")
+fit_clr <- readRDS("fit_clr.rds")
+fit_rclr <- readRDS("fit_rclr.rds")
+fit_abund_top20 <- readRDS("fit_abund_top20.rds")
+
+loo_comp <- readRDS("loo_comparison.rds")
+loos <- readRDS("loos.rds")
 ```
 
 ```{r}
-# Comparing clr and rclr
-loo_comp <- loo_compare(
-  loo(fit_lra_ratios, moment_match = TRUE),
-  loo(fit_clr_ratios, moment_match = TRUE),
-  loo(fit_rclr_ratios, moment_match = TRUE),
-  loo(fit_abund_top15, moment_match = TRUE)
-)
+# Count how many observations have pareto_k > 0.7 per model
+sapply(loos, function(x) sum(x$diagnostics$pareto_k > 0.7))
 
 # Print the results
 print(loo_comp)
 ```
 
-After applying moment matching to improve the reliability of the leave-one-out estimates, all Pareto $k$ values were below $0.7$, indicating good diagnostic quality.
+After applying moment matching to improve the reliability of the leave-one-out estimates, all Pareto $k$ values were below the diagnostic threshold of $0.7$, except for a single observation in the LRA-based model. This indicates that the LOO estimates are reliable and can be used for model comparison.
 
-The CLR-, rCLR-, and LRA-based models showed very similar predictive performance, with no statistically significant differences between them (elpd differences well within one standard error). This suggests that the choice of log-ratio transformation has minimal effect on predictive accuracy in this context.
+The LRA, CLR, and rCLR models showed very similar predictive performance, with elpd differences well within one standard error. This suggests that the specific choice of log-ratio transformation does not meaningfully affect predictive accuracy in this setting.
 
-In contrast, the model based on log-transformed abundances of the 15 most prevalent taxa (without any ratio transformation) performed slightly worse. While the difference is still modest, it suggests that ratio-based features may provide a small advantage in survival prediction over raw log-abundances.
+However, the model based on raw log-transformed abundances of the top 20 taxa (without log-ratios) performed notably worse than the LRA model, with an estimated ELPD difference that exceeds one standard error. This suggests a meaningful decline in predictive performance when ratio-based features are not used.
 
-All log-ratio-based models included 105 pairwise features derived from the top 15 taxa. Despite the relatively high dimensionality, model fitting remained computationally efficient and showed good convergence across all methods.
-
+The CLR- and rCLR-based models included 20 transformed taxa as predictors, whereas the LRA-based model incorporated 190 pairwise log-ratio features derived from the same 20 taxa. This led to a substantial increase in dimensionality for the LRA model, although model fitting remained relatively fast and stable.
 
 
