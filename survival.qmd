@@ -264,12 +264,3 @@ The LRA, CLR, and rCLR models showed very similar predictive performance, with e
 However, the model based on raw log-transformed abundances of the top 20 taxa (without log-ratios) performed notably worse than the LRA model, with an estimated ELPD difference that exceeds one standard error. This suggests a meaningful decline in predictive performance when ratio-based features are not used.
 
 The CLR- and rCLR-based models included 20 transformed taxa as predictors, whereas the LRA-based model incorporated 190 pairwise log-ratio features derived from the same 20 taxa. This led to a substantial increase in dimensionality for the LRA model, although model fitting remained relatively fast and stable.
-
-
-
-## Test Plot
-
-```{r}
-plot(1:10)
-```
-
