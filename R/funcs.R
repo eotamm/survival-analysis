@@ -12,63 +12,6 @@ clean_column_names <- function(df) {
   return(df)
 }
 
-
-
-# Function to prepare data for analysis
-prepare_logratios_from_clr <- function(tse_subset, method = c("clr", "rclr", "lra")) {
-  method <- match.arg(method)
-  
-  # Transformation logic
-  if (method == "lra") {
-    # Convert to relative abundance
-    tse_subset <- transformAssay(
-      tse_subset,
-      method = "relabundance",
-      assay.type = "counts",
-      name = "relabundance"
-    )
-    
-    # Add pseudocount and log-transform
-    assay(tse_subset, "log") <- log(assay(tse_subset, "relabundance") + 1e-6)
-    mat <- t(assay(tse_subset, "log"))
-    
-  } else {
-    # CLR or rCLR transformation via mia
-    tse_subset <- transformAssay(
-      tse_subset,
-      method = method,
-      assay.type = "counts",
-      pseudocount = 1e-6,
-      name = method
-    )
-    mat <- t(assay(tse_subset, method))
-  }
-  
-  # Compute all pairwise log(x/y)
-  microbe_names <- colnames(mat)
-  combs <- combn(microbe_names, 2, simplify = FALSE)
-  
-  df <- purrr::map_dfc(combs, function(pair) {
-    col1 <- pair[1]
-    col2 <- pair[2]
-    ratio_name <- paste0("logratio_", col1, "_vs_", col2)
-    tibble(!!ratio_name := mat[, col1] - mat[, col2])
-  })
-  
-  # Standardize and finalize
-  df <- as.data.frame(scale(df))
-  df$Event <- colData(tse_subset)$Event
-  df$Event_time <- colData(tse_subset)$Event_time
-  df <- clean_column_names(df)
-  df <- df %>%
-    filter(Event_time >= 0) %>%
-    drop_na()
-  
-  return(df)
-}
-
-
-
 # Model fitting function for ratios
 fit_model <- function(df, model_name) {
   # Define predictor variables
@@ -94,3 +37,4 @@ fit_model <- function(df, model_name) {
   saveRDS(fit, paste0(model_name, ".rds"))
   return(fit)
 }
+
