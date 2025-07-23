@@ -28,16 +28,19 @@ top5_microbes <- names(sort(prevalence, decreasing = TRUE))[1:5]
 # Subset the TSE object to keep only the top 5 microbes
 tse_top5 <- tse[top5_microbes, ]
 
-# Normalize counts to relative abundances
-tse_top5 <- transformAssay(
-  tse_top5,
-  method = "relabundance",
-  assay.type = "counts",
-  name = "relabundance"
-)
-
-# Apply log transformation to relative abundances with pseudocount
-assay(tse_top5, "logcounts") <- log(assay(tse_top5, "relabundance") + 1e-6)
+# Transform raw count data to log-transformed relative abundances
+tse_top5 <- tse_top5 |>
+  transformAssay(
+    method = "relabundance",
+    assay.type = "counts",
+    name = "relabundance"
+  ) |>
+  transformAssay(
+    method = "log",
+    assay.type = "relabundance",
+    pseudocount = 1e-6,
+    name = "logcounts"
+  )
 
 # Convert the log-transformed assay data to a data frame
 df <- as.data.frame(t(assay(tse_top5, "logcounts")))
