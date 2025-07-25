@@ -1,10 +1,16 @@
 # Fit probabilistic Cox model with brms using helper function
 fit_brms <- fit_model(df, model_name = "fit_brms")
 
+# Fit the model using CLR-transformed features
+fit_clr5 <- fit_model(df_clr5, "fit_clr5")
+
+# Fit the model using log-ratios from log-relative-abundances
+fit_lra5 <- fit_model(df_lra_ratios5, "fit_lra5")
+
 # Fit the model using log-transformed relative abundances (no ratios)
 fit_abund_top20 <- fit_model(df_abund, "fit_abund_top20")
 
-# Fit the model using log-ratios from log-relative-abundancesgi
+# Fit the model using log-ratios from log-relative-abundances
 fit_lra_ratios <- fit_model(df_lra_ratios, "fit_lra_ratios")
 
 # Fit the model using CLR-transformed features
