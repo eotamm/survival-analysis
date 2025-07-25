@@ -56,10 +56,52 @@ df <- clean_column_names(df)
 remove_vars <- c("Event", "Event_time")
 predictors <- setdiff(names(df), remove_vars)
 
+# CLR top5
+tse_top5 <- transformAssay(
+  tse_top5,
+  method = "clr",
+  assay.type = "counts",
+  pseudocount = 1e-6,
+  name = "clr"
+)
+df_clr5 <- as.data.frame(t(assay(tse_top5, "clr")))
+df_clr5$Event <- colData(tse_top5)$Event
+df_clr5$Event_time <- colData(tse_top5)$Event_time
+df_clr5 <- clean_column_names(df_clr5)
+
+# Transform counts to log-ratio features
+tse_top5 <- tse_top5 |>
+  transformAssay(
+    method = "relabundance",
+    assay.type = "counts",
+    name = "relabundance"
+  ) |>
+  transformAssay(
+    method = "log",
+    assay.type = "relabundance",
+    pseudocount = 1e-6,
+    name = "log_abund"
+  ) |>
+  transformAssay(
+    method = "difference",
+    assay.type = "log_abund",
+    name = "logratios"
+  )
+
+
+# Convert sparse logratio matrix to dense matrix, then to data.frame
+logratio_mat5 <- as.matrix(assay(altExp(tse_top5, "logratios")))
+df_lra_ratios5 <- as.data.frame(t(logratio_mat5))
+
+# Standardize features and add survival metadata
+df_lra_ratios5 <- as.data.frame(scale(df_lra_ratios5))
+df_lra_ratios5$Event <- colData(tse_top5)$Event
+df_lra_ratios5$Event_time <- colData(tse_top5)$Event_time
+df_lra_ratios5 <- clean_column_names(df_lra_ratios5)
+
 # Select the 20 most prevalent microbes for log-ratio analysis
 top20_microbes <- names(sort(prevalence, decreasing = TRUE))[1:20]
 tse_top20 <- tse[top20_microbes, ]
-
 
 # Transform counts to log-ratio features
 tse_top20 <- tse_top20 |>
@@ -123,3 +165,4 @@ df_abund <- as.data.frame(t(assay(tse_top20, "log_abund")))
 df_abund$Event <- colData(tse_top20)$Event
 df_abund$Event_time <- colData(tse_top20)$Event_time
 df_abund <- clean_column_names(df_abund)
+
