@@ -1,35 +1,28 @@
-# Fit probabilistic Cox model with brms using helper function
-fit_brms <- fit_model(df, model_name = "fit_brms")
+# Run Bayesian survival analysis across different data transformations and feature set sizes,
+# with feature counts selected automatically based on the number of taxa in the input data (tse)
+set.seed(2025)
+res_brm_result <- compare_transforms_with_brm(tse)
 
-# Fit the model using CLR-transformed features
-fit_clr5 <- fit_model(df_clr5, "fit_clr5")
+# Save the results to file
+saveRDS(res_brm_result, "feature_survival_result.rds")
 
-# Fit the model using log-ratios from log-relative-abundances
-fit_lra5 <- fit_model(df_lra_ratios5, "fit_lra5")
-
-# Fit the model using log-transformed relative abundances (no ratios)
-fit_abund_top20 <- fit_model(df_abund, "fit_abund_top20")
-
-# Fit the model using log-ratios from log-relative-abundances
-fit_lra_ratios <- fit_model(df_lra_ratios, "fit_lra_ratios")
-
-# Fit the model using CLR-transformed features
-fit_clr <- fit_model(df_clr, "fit_clr")
-
-# Fit the model using rCLR-transformed features
-fit_rclr <- fit_model(df_rclr, "fit_rclr")
+# Fit probabilistic Cox models for each transformation output
+fit_clr   <- fit_model(df_clr,   model_name = "fit_clr")
+fit_rclr  <- fit_model(df_rclr,  model_name = "fit_rclr")
+fit_abund <- fit_model(df_abund, model_name = "fit_abund")
+fit_lra   <- fit_model(df_lra,   model_name = "fit_lra")
 
 # Calculate LOO for each model individually with moment matching
-loo_lra   <- loo(fit_lra_ratios, moment_match = TRUE)
-loo_clr   <- loo(fit_clr, moment_match = TRUE)
-loo_rclr  <- loo(fit_rclr, moment_match = TRUE)
-loo_abund <- loo(fit_abund_top20, moment_match = TRUE)
+loo_lra   <- loo(fit_lra,   moment_match = TRUE)
+loo_clr   <- loo(fit_clr,   moment_match = TRUE)
+loo_rclr  <- loo(fit_rclr,  moment_match = TRUE)
+loo_abund <- loo(fit_abund, moment_match = TRUE)
 
-# List of all LOO objects
+# List of all LOO objects for convenient access
 loos <- list(
-  lra = loo_lra,
-  clr = loo_clr,
-  rclr = loo_rclr,
+  lra   = loo_lra,
+  clr   = loo_clr,
+  rclr  = loo_rclr,
   abund = loo_abund
 )
 
@@ -41,6 +34,6 @@ loo_comp <- loo_compare(
   loo_abund
 )
 
-# Save
+# Save results
 saveRDS(loos, file = "loos.rds")
 saveRDS(loo_comp, file = "loo_comparison.rds")
