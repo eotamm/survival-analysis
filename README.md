@@ -7,13 +7,13 @@ This repository contains code for a Bayesian survival analysis focused on microb
 The project implements a probabilistic Cox proportional hazards model using the `brms` package in R. Microbial abundance data are used as predictors of time-to-event outcomes, with a focus on the most prevalent taxa.
 
 Key steps include:
-- Data preprocessing and transformation (log-transformed microbial counts)
+- Data preprocessing and transformation
 - Feature selection based on taxon prevalence
-- Model fitting with censored survival data
+- Model fitting with censored survival data: Bayesian survival models are fit to the data using different priors (Normal and Horseshoe).
 - Posterior summarization and interpretation of hazard ratios
 - Visualization of survival using Kaplan–Meier curves
 - Probabilistic survival estimation using the Imprecise Dirichlet Process (IDP)
-- Construction of log-ratio features from LRA, CLR and rCLR transformations and comparing them
+- Construction of centered log-ratio (CLR), robust CLR (rCLR), pairwise log-ratio analysis (LRA), additive log-ratio (ALR), presence/absence (PA), total sum scaling (TSS), log-transformed TSS (logTSS), and arcsin square root (ASIN) and comparing them.
 
 ## Files
 
