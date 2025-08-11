@@ -15,7 +15,15 @@ library(mia)
 library(bayesboot)
 library(IDPSurvival)
 library(Matrix)
-set.seed(2025)
+library(patchwork)
+library(cmdstanr)
+# Install CmdStan
+if (is.null(cmdstanr::cmdstan_path())) {
+  message("CmdStan is not installed, installing now...")
+  cmdstanr::install_cmdstan()
+}
+
+set.seed(1)
 
 # Load the TreeSummarizedExperiment object
 tse <- readRDS("survival_tse.rds")
@@ -45,11 +53,13 @@ df$Event_time <- colData(tse)$Event_time
 df <- clean_column_names(df)
 
 # Top 20 features for all transformations
-df_clr <- extract_top_features_by_transformation(tse, method = "clr",
-                                                 top_n = 20, pseudocount = 1e-6)
-df_rclr <- extract_top_features_by_transformation(tse, method = "rclr",
-                                                  top_n = 20, pseudocount = 1e-6)
-df_abund <- extract_top_features_by_transformation(tse, method = "log_abund",
-                                                   top_n = 20, pseudocount = 1e-6)
-df_lra <- extract_top_features_by_transformation(tse, method = "lra",
-                                                 top_n = 20, pseudocount = 1e-6)
+df_clr     <- extract_top_features_by_transformation(tse, method = "clr",     top_n = 20)
+df_rclr    <- extract_top_features_by_transformation(tse, method = "rclr",    top_n = 20)
+df_logabund <- extract_top_features_by_transformation(tse, method = "log_abund", top_n = 20)
+df_lra     <- extract_top_features_by_transformation(tse, method = "lra",     top_n = 20)
+df_pa      <- extract_top_features_by_transformation(tse, method = "pa",      top_n = 20)
+df_tss     <- extract_top_features_by_transformation(tse, method = "tss",     top_n = 20)
+df_logtss  <- extract_top_features_by_transformation(tse, method = "logtss",  top_n = 20)
+df_asin    <- extract_top_features_by_transformation(tse, method = "asin",    top_n = 20)
+df_alr     <- extract_top_features_by_transformation(tse, method = "alr",     top_n = 20)
+
