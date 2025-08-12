@@ -39,7 +39,12 @@ compare_transforms_with_brm <- function(tse, pseudocount = 1e-6, alr_ref = "g__S
         transformAssay(method = "log", assay.type = "relabundance", pseudocount = pseudocount, name = "log_abund") |>
         transformAssay(method = "difference", assay.type = "log_abund", name = "logratios", MARGIN = 1L)
     },
-    pa = function(x) transformAssay(x, method = "pa", assay.type = "counts", name = "pa"),
+    pa = function(x) {
+      x <- transformAssay(x, method = "relabundance", assay.type = "counts", name = "tss")
+      ra <- assay(x, "tss")
+      assay(x, "pa") <- (ra >= 0.001) * 1  # 0.1%
+      x
+    },
     tss = function(x) transformAssay(x, method = "relabundance", assay.type = "counts", name = "tss"),
     logtss = function(x) {
       x |>
@@ -203,7 +208,12 @@ extract_top_features_by_transformation <- function(tse,
                      transformAssay(method = "relabundance", assay.type = "counts", name = "relabundance") |>
                      transformAssay(method = "log", assay.type = "relabundance", pseudocount = pseudocount, name = "log_abund") |>
                      transformAssay(method = "difference", assay.type = "log_abund", name = "logratios", MARGIN = 1L),
-                   pa = transformAssay(tse, method = "pa", assay.type = "counts", name = "pa"),
+                   pa = {
+                     out <- transformAssay(tse, method = "relabundance", assay.type = "counts", name = "tss")
+                     ra  <- assay(out, "tss")
+                     assay(out, "pa") <- (ra >= 0.001) * 1 #0.1%
+                     out
+                   },
                    tss = transformAssay(tse, method = "relabundance", assay.type = "counts", name = "tss"),
                    logtss = tse |>
                      transformAssay(method = "relabundance", assay.type = "counts", name = "tss") |>
