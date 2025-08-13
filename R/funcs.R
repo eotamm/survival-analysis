@@ -333,6 +333,42 @@ get_pred_df <- function(model, method_name) {
   )
 }
 
+# Compute AUROC from all posterior samples
+get_auc_posterior <- function(model, method_name, prior_label) {
+  pred_mat <- posterior_linpred(model, transform = FALSE)
+  labels <- model$data$Event
+  
+  auc_vals <- apply(pred_mat, 1, function(scores) {
+    roc_obj <- pROC::roc(response = labels, predictor = scores, quiet = TRUE)
+    as.numeric(roc_obj$auc)
+  })
+  
+  tibble(
+    model = method_name,
+    prior = prior_label,
+    AUROC = auc_vals
+  )
+}
+
+
+# Compute C-index
+get_c_posterior <- function(model, method_name, prior_label) {
+  pred_mat <- posterior_linpred(model, transform = FALSE)
+  time  <- model$data$Event_time
+  event <- model$data$Event
+  c_vals <- apply(pred_mat, 1, function(lp) {
+    ok <- is.finite(lp) & is.finite(time) & is.finite(event)
+    if (!any(ok)) return(NA_real_)
+    cf <- survival::concordance(Surv(time[ok], event[ok]) ~ lp[ok], reverse = TRUE)
+    as.numeric(cf$concordance)
+  })
+  tibble(
+    model  = method_name,
+    prior  = prior_label,
+    Cindex = c_vals
+  )
+}
+
 
 # Count Más-o-menos riskscore
 calculate_masomenos <- function(df) {
