@@ -16,6 +16,7 @@ library(bayesboot)
 library(IDPSurvival)
 library(Matrix)
 library(patchwork)
+library(pROC)
 library(cmdstanr)
 # Install CmdStan
 if (is.null(cmdstanr::cmdstan_path())) {
