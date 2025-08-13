@@ -95,3 +95,52 @@ loo_comp_hs <- loo_compare(list(
 saveRDS(loo_hs, file = file.path("model_result", "loo_hs.rds"))
 saveRDS(loo_comp_hs, file = file.path("model_result", "loo_compare_hs.rds"))
 
+
+# Collect AUC results for all models
+auc_all <- bind_rows(
+  get_auc_posterior(fit_rclr_normal,   "rCLR",              "Normal"),
+  get_auc_posterior(fit_clr_normal,    "CLR",               "Normal"),
+  get_auc_posterior(fit_logtss_normal, "logTSS",            "Normal"),
+  get_auc_posterior(fit_lra_normal,    "LRA",               "Normal"),
+  get_auc_posterior(fit_pa_normal,     "PA",                "Normal"),
+  get_auc_posterior(fit_tss_normal,    "TSS",               "Normal"),
+  get_auc_posterior(fit_asin_normal,   "Asin",              "Normal"),
+  get_auc_posterior(fit_alr_normal,    "ALR",               "Normal"),
+  
+  get_auc_posterior(fit_rclr_hs,   "rCLR",              "Horseshoe"),
+  get_auc_posterior(fit_clr_hs,    "CLR",               "Horseshoe"),
+  get_auc_posterior(fit_logtss_hs, "logTSS",            "Horseshoe"),
+  get_auc_posterior(fit_lra_hs,    "LRA",               "Horseshoe"),
+  get_auc_posterior(fit_pa_hs,     "PA",                "Horseshoe"),
+  get_auc_posterior(fit_tss_hs,    "TSS",               "Horseshoe"),
+  get_auc_posterior(fit_asin_hs,   "Asin",              "Horseshoe"),
+  get_auc_posterior(fit_alr_hs,    "ALR",               "Horseshoe")
+)
+
+# Save
+saveRDS(auc_all, file.path("model_result", "posterior_auc_all.rds"))
+
+
+# Collect C-index results
+c_all <- dplyr::bind_rows(
+  get_c_posterior(fit_rclr_normal,   "rCLR",              "Normal"),
+  get_c_posterior(fit_clr_normal,    "CLR",               "Normal"),
+  get_c_posterior(fit_logtss_normal, "logTSS",            "Normal"),
+  get_c_posterior(fit_lra_normal,    "LRA",               "Normal"),
+  get_c_posterior(fit_pa_normal,     "PA",                "Normal"),
+  get_c_posterior(fit_tss_normal,    "TSS",               "Normal"),
+  get_c_posterior(fit_asin_normal,   "Asin",              "Normal"),
+  get_c_posterior(fit_alr_normal,    "ALR",               "Normal"),
+  
+  get_c_posterior(fit_rclr_hs,   "rCLR",              "Horseshoe"),
+  get_c_posterior(fit_clr_hs,    "CLR",               "Horseshoe"),
+  get_c_posterior(fit_logtss_hs, "logTSS",            "Horseshoe"),
+  get_c_posterior(fit_lra_hs,    "LRA",               "Horseshoe"),
+  get_c_posterior(fit_pa_hs,     "PA",                "Horseshoe"),
+  get_c_posterior(fit_tss_hs,    "TSS",               "Horseshoe"),
+  get_c_posterior(fit_asin_hs,   "Asin",              "Horseshoe"),
+  get_c_posterior(fit_alr_hs,    "ALR",               "Horseshoe")
+)
+
+# Save
+saveRDS(c_all, file.path("model_result", "cindex_posterior_all.rds"))
