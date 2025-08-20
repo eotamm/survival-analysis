@@ -1,6 +1,5 @@
 # Survivalanalysis using probabilistic models
 
-
 # Introduction
 
 Let’s download all the necessary libraries:
@@ -1027,3 +1026,4 @@ ggplot(df_all, aes(x = factor(Event), y = risk_score, fill = method)) +
 ![](figures/unnamed-chunk-23-1.png)
 
 The figure indicates that all three methods produce higher predicted risk scores for individuals who experienced the event compared to those who were censored, showing that they capture the expected risk–outcome relationship reasonably well. The separation between groups is visible for each method, but given the degree of overlap in score distributions, no firm conclusions can be drawn about differences in performance between the methods based on this plot alone.
+
