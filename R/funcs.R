@@ -107,11 +107,6 @@ compare_transforms_with_brm <- function(tse, pseudocount = 1e-6, alr_ref = "g__S
       feats <- stats$feature[1:min(N, nrow(stats))]
       df_subset <- df_train[, c(feats, "Event", "Event_time")]
       
-      if (nrow(na.omit(df_subset)) == 0) {
-        warning("→ Ei kelvollisia havaintoja transformaatiossa ", tname, " ja N = ", N, ". Hypätään yli.")
-        next
-      }
-      
       formula_str <- paste("Event_time | cens(1 - Event) ~", paste(feats, collapse = " + "))
       message("   Fitting brms model with ", N, " features (", tname, ")...")
       
@@ -380,3 +375,4 @@ calculate_masomenos <- function(df) {
   score <- as.matrix(df[, predictors]) %*% signs / length(signs)
   return(as.numeric(score))
 }
+
