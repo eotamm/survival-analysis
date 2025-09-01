@@ -160,7 +160,7 @@ transforms <- list(
 )
 
 # Run settings
-B_boot      <- 50
+B_boot      <- 1000
 set.seed(1)
 
 # Run different models
@@ -196,6 +196,7 @@ saveRDS(xgb_res,      file.path(out_dir, "xgb_cindex_oob_boot_summary.rds"))
 saveRDS(deepsurv_res, file.path(out_dir, "deepsurv_cindex_oob_boot_summary.rds"))
 saveRDS(logit_res,    file.path(out_dir, "logit_cindex_oob_boot_summary.rds"))
 saveRDS(cox_res,      file.path(out_dir, "coxph_cindex_oob_boot_summary.rds"))
+
 
 
 
