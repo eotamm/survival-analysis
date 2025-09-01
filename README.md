@@ -14,6 +14,7 @@ Key steps include:
 - Visualization of survival using Kaplan–Meier curves
 - Probabilistic survival estimation using the Imprecise Dirichlet Process (IDP)
 - Construction of centered log-ratio (CLR), robust CLR (rCLR), pairwise log-ratio analysis (LRA), additive log-ratio (ALR), presence/absence (PA), total sum scaling (TSS), log-transformed TSS (logTSS), and arcsin square root (ASIN) and comparing them.
+- Multiple survival modeling approaches are compared (CoxPH, Random Survival Forests, XGB-Cox, DeepSurv, and a logistic-model that ignores censoring).
 
 ## Files
 
