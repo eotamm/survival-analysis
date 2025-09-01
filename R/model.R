@@ -144,3 +144,58 @@ c_all <- dplyr::bind_rows(
 
 # Save
 saveRDS(c_all, file.path("model_result", "cindex_posterior_all.rds"))
+
+
+
+# List of transformations
+transforms <- list(
+  CLR    = df_clr,
+  rCLR   = df_rclr,
+  logTSS = df_logtss,
+  LRA    = df_lra,
+  PA     = df_pa,
+  TSS    = df_tss,
+  Asin   = df_asin,
+  ALR    = df_alr
+)
+
+# Run settings
+B_boot      <- 50
+set.seed(1)
+
+# Run different models
+cox_res <- purrr::imap_dfr(transforms, ~ coxph_cindex_boot_oob(
+  df = .x, method_name = .y, B = B_boot, ties = "efron"
+))
+
+rsf_res <- purrr::imap_dfr(transforms, ~ rsf_cindex_boot_oob(
+  df = .x, method_name = .y, B = B_boot
+))
+
+xgb_res <- purrr::imap_dfr(transforms, ~ xgb_cox_cindex_boot_oob(
+  df = .x, method_name = .y, B = B_boot
+))
+
+deepsurv_res <- purrr::imap_dfr(transforms, ~ deepsurv_cindex_boot_oob(
+  df = .x, method_name = .y,
+  B = B_boot,
+  hidden = c(32, 16), dropout = 0.1, l2 = 1e-4,
+  lr = 1e-3, epochs = 120, patience = 12,
+  verbose = 0, run_eagerly = TRUE
+))
+
+logit_res <- purrr::imap_dfr(transforms, ~ logit_cindex_boot_oob(
+  df = .x, method_name = .y, B = B_boot, class_weights = TRUE
+))
+
+# Save results
+out_dir <- file.path("model_result", "results")
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+saveRDS(rsf_res,      file.path(out_dir, "rsf_cindex_oob_boot_summary.rds"))
+saveRDS(xgb_res,      file.path(out_dir, "xgb_cindex_oob_boot_summary.rds"))
+saveRDS(deepsurv_res, file.path(out_dir, "deepsurv_cindex_oob_boot_summary.rds"))
+saveRDS(logit_res,    file.path(out_dir, "logit_cindex_oob_boot_summary.rds"))
+saveRDS(cox_res,      file.path(out_dir, "coxph_cindex_oob_boot_summary.rds"))
+
+
+
