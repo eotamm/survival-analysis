@@ -107,6 +107,11 @@ compare_transforms_with_brm <- function(tse, pseudocount = 1e-6, alr_ref = "g__S
       feats <- stats$feature[1:min(N, nrow(stats))]
       df_subset <- df_train[, c(feats, "Event", "Event_time")]
       
+      if (nrow(na.omit(df_subset)) == 0) {
+        warning("→ Ei kelvollisia havaintoja transformaatiossa ", tname, " ja N = ", N, ". Hypätään yli.")
+        next
+      }
+      
       formula_str <- paste("Event_time | cens(1 - Event) ~", paste(feats, collapse = " + "))
       message("   Fitting brms model with ", N, " features (", tname, ")...")
       
@@ -376,3 +381,387 @@ calculate_masomenos <- function(df) {
   return(as.numeric(score))
 }
 
+
+
+# C-INDEX
+harrell_c <- function(time, event, score, reverse = TRUE) {
+  ok <- is.finite(time) & is.finite(event) & is.finite(score)
+  ok[is.na(ok)] <- FALSE
+  if (!any(ok)) return(NA_real_)
+  as.numeric(
+    survival::concordance(
+      survival::Surv(time[ok], event[ok]) ~ score[ok],
+      reverse = reverse
+    )$concordance
+  )
+}
+# Time-dependent AUC 
+time_auc_at <- function(time, event, marker, tau) {
+  keep <- is.finite(time) & is.finite(event) & is.finite(marker)
+  if (!any(keep) || !is.finite(tau)) return(NA_real_)
+  t <- time[keep]; d <- event[keep]; m <- marker[keep]
+  
+  if (!(any(d == 1 & t <= tau) && any(t > tau))) return(NA_real_)
+  if (stats::sd(m, na.rm = TRUE) <= 0) return(NA_real_)
+  
+  tr <- tryCatch(
+    timeROC::timeROC(T = t, delta = d, marker = m, cause = 1, times = tau, iid = FALSE),
+    error = function(e) NULL
+  )
+  if (is.null(tr)) return(NA_real_)
+  as.numeric(tr$AUC[which.min(abs(tr$times - tau))])
+}
+
+# Ggeneric OOB bootstrap
+oob_bootstrap <- function(df, B = 500,
+                          risk_fun,
+                          require_train_events = TRUE,
+                          require_oob_events   = FALSE,
+                          verbose = TRUE) {
+  df_cc <- df[stats::complete.cases(df), , drop = FALSE]
+  n <- nrow(df_cc); if (n < 5) stop("Too few observations for OOB bootstrap.")
+  tau <- stats::median(df_cc$Event_time[df_cc$Event == 1], na.rm = TRUE)
+  
+  oob_c   <- rep(NA_real_, B)
+  oob_auc <- rep(NA_real_, B)
+  
+  if (isTRUE(verbose)) message(sprintf("[OOB] B=%d; tau=%.4f", B, tau))
+  
+  for (b in seq_len(B)) {
+    # Resample until OOB non-empty
+    idx <- sample.int(n, replace = TRUE)
+    oob <- setdiff(seq_len(n), unique(idx))
+    while (length(oob) == 0L) { idx <- sample.int(n, replace = TRUE); oob <- setdiff(seq_len(n), unique(idx)) }
+    
+    train <- df_cc[idx, , drop = FALSE]
+    test  <- df_cc[oob, , drop = FALSE]
+    
+    # Event guards
+    if (require_train_events && sum(train$Event == 1, na.rm = TRUE) == 0L) next
+    if (require_oob_events   && sum(test$Event  == 1, na.rm = TRUE) == 0L) next
+    
+    # Fit model + get test risk
+    risk <- tryCatch(risk_fun(train, test), error = function(e) rep(NA_real_, nrow(test)))
+    risk <- as.numeric(risk)
+    
+    # C-index
+    oob_c[b] <- harrell_c(test$Event_time, test$Event, risk, reverse = TRUE)
+    
+    # AUC
+    oob_auc[b] <- time_auc_at(test$Event_time, test$Event, risk, tau)
+  }
+  
+  list(tau = tau, c = oob_c, auc = oob_auc)
+}
+
+# Summarize bootstrap vectors
+summarize_boot <- function(model_name, method_name, tau, c_vec, auc_vec) {
+  c_has   <- any(is.finite(c_vec))
+  auc_has <- any(is.finite(auc_vec))
+  
+  c_est <- if (c_has) stats::median(c_vec, na.rm = TRUE) else NA_real_
+  c_lo  <- if (c_has) as.numeric(stats::quantile(c_vec,  0.025, na.rm = TRUE)) else NA_real_
+  c_hi  <- if (c_has) as.numeric(stats::quantile(c_vec,  0.975, na.rm = TRUE)) else NA_real_
+  
+  auc_est <- if (auc_has) stats::median(auc_vec, na.rm = TRUE) else NA_real_
+  auc_lo  <- if (auc_has) as.numeric(stats::quantile(auc_vec, 0.025, na.rm = TRUE)) else NA_real_
+  auc_hi  <- if (auc_has) as.numeric(stats::quantile(auc_vec, 0.975, na.rm = TRUE)) else NA_real_
+  
+  tibble::tibble(
+    model    = model_name,
+    method   = method_name,
+    metric   = c("C", "AUC"),
+    time     = c(NA_real_, tau),
+    estimate = c(c_est, auc_est),
+    lower    = c(c_lo,  auc_lo),
+    upper    = c(c_hi,  auc_hi)
+  )
+}
+
+# N_eff and frac_eff
+append_neff <- function(tbl, res) {
+  n_eff_c   <- sum(is.finite(res$c))
+  n_eff_auc <- sum(is.finite(res$auc))
+  B_tot     <- length(res$c)
+  dplyr::mutate(
+    tbl,
+    B        = B_tot,
+    n_eff    = c(n_eff_c, n_eff_auc),
+    frac_eff = n_eff / B
+  )
+}
+
+# RSF: OOB bootstrap
+rsf_cindex_boot_oob <- function(
+    df, method_name,
+    B = 500,
+    num.trees = 1500,
+    min.node.size = 10,
+    mtry = NULL
+) {
+  risk_fun <- function(train, test) {
+    p_train <- max(1, ncol(train) - 2L)
+    mtry_use <- if (is.null(mtry)) max(1, min(p_train, floor(sqrt(p_train)))) else mtry
+    fit <- ranger::ranger(
+      survival::Surv(Event_time, Event) ~ .,
+      data = train,
+      num.trees = num.trees,
+      mtry = mtry_use,
+      min.node.size = min.node.size,
+      splitrule = "logrank",
+      write.forest = TRUE
+    )
+    pr <- predict(fit, data = test)
+    chf <- pr$chf
+    if (is.matrix(chf)) chf[, ncol(chf), drop = TRUE] else as.numeric(chf)
+  }
+  message(sprintf("[RSF %s] B=%d", method_name, B))
+  res <- oob_bootstrap(df, B = B, risk_fun = risk_fun,
+                       require_train_events = TRUE, require_oob_events = FALSE, verbose = FALSE)
+  tbl <- summarize_boot(model_name = method_name, method_name = "RSF_OOB",
+                        tau = res$tau, c_vec = res$c, auc_vec = res$auc)
+  append_neff(tbl, res)
+}
+
+
+# XGBoost: OOB bootstrap
+xgb_cox_cindex_boot_oob <- function(
+    df, method_name,
+    B = 500,
+    nrounds = 500,
+    max_depth = 3, eta = 0.04,
+    subsample = 0.65, colsample_bytree = NULL,
+    min_child_weight = 3, reg_lambda = 1, reg_alpha = 0
+) {
+  if (!requireNamespace("xgboost", quietly = TRUE))
+    stop("Please install.packages('xgboost')")
+  # risk_fun: fit XGB-Cox on 'train', return risk scores for 'test'
+  risk_fun <- function(train, test) {
+    xtr_df <- train[, setdiff(names(train), c("Event_time", "Event")), drop = FALSE]
+    xte_df <- test[,  setdiff(names(test),  c("Event_time", "Event")), drop = FALSE]
+    mm_all <- stats::model.matrix(~ . - 1, data = rbind(xtr_df, xte_df))
+    ntr    <- nrow(xtr_df)
+    Xtr    <- mm_all[seq_len(ntr), , drop = FALSE]
+    Xte    <- mm_all[(ntr + 1L):nrow(mm_all), , drop = FALSE]
+    p <- ncol(Xtr); if (p == 0L) return(rep(NA_real_, nrow(test)))
+    colsample_use <- if (is.null(colsample_bytree)) sqrt(p) / p else colsample_bytree
+    
+    # XGB Cox labels: +time for events, -time for censored
+    eps <- .Machine$double.eps
+    ttr <- pmax(train$Event_time, eps)
+    ytr <- ifelse(train$Event == 1, ttr, -ttr)
+    dtr <- xgboost::xgb.DMatrix(data = Xtr, label = ytr)
+    dte <- xgboost::xgb.DMatrix(data = Xte)
+    params <- list(objective="survival:cox", eval_metric="cox-nloglik",
+                   max_depth=max_depth, eta=eta, subsample=subsample,
+                   colsample_bytree=colsample_use, min_child_weight=min_child_weight,
+                   lambda=reg_lambda, alpha=reg_alpha)
+    fit <- xgboost::xgb.train(params=params, data=dtr, nrounds=nrounds, verbose=0)
+    as.numeric(predict(fit, dte))
+  }
+  message(sprintf("[XGB%s] B=%d, nrounds=%d", method_name, B, nrounds))
+  res <- oob_bootstrap(df, B = B, risk_fun = risk_fun,
+                       require_train_events = TRUE, require_oob_events = FALSE, verbose = FALSE)
+  tbl <- summarize_boot(model_name = method_name, method_name = "XGB_Cox_OOB",
+                        tau = res$tau, c_vec = res$c, auc_vec = res$auc)
+  append_neff(tbl, res)
+}
+
+
+# DeepSurv: OOB bootstrap
+deepsurv_cindex_boot_oob <- function(
+    df, method_name,
+    B = 500,
+    hidden = c(64, 32),
+    dropout = 0.0,
+    l2 = 1e-4,
+    lr = 1e-3,
+    epochs = 300, patience = 30,
+    verbose = 0,
+    run_eagerly = TRUE,
+    require_oob_events = TRUE
+) {
+  
+  # risk_fun: fit DeepSurv on 'train', return risk scores for 'test'
+  risk_fun <- function(train, test) {
+    xtr_df <- train[, setdiff(names(train), c("Event_time","Event")), drop = FALSE]
+    xte_df <- test[,  setdiff(names(test),  c("Event_time","Event")), drop = FALSE]
+    mm_all <- stats::model.matrix(~ . - 1, data = rbind(xtr_df, xte_df))
+    ntr    <- nrow(xtr_df)
+    Xtr    <- mm_all[seq_len(ntr), , drop = FALSE]
+    Xte    <- mm_all[(ntr + 1L):nrow(mm_all), , drop = FALSE]
+    p      <- ncol(Xtr); if (p == 0L) return(rep(NA_real_, nrow(test)))
+    
+    # Standardize using training statistics
+    mu <- matrixStats::colMeans2(Xtr)
+    sd <- matrixStats::colSds(Xtr); sd[!is.finite(sd) | sd < 1e-8] <- 1
+    Xtr_s <- sweep(sweep(Xtr, 2, mu, "-"), 2, sd, "/")
+    Xte_s <- sweep(sweep(Xte, 2, mu, "-"), 2, sd, "/")
+    
+    # Sort training rows by time for stable partial-likelihood risk sets
+    ord   <- order(train$Event_time)
+    Xtr_s <- Xtr_s[ord, , drop = FALSE]
+    ev_tr <- as.numeric(train$Event[ord])
+    
+    # Cox partial likelihood loss
+    cox_ph_loss_safe <- function(y_true, y_pred) {
+      tf <- tensorflow::tf
+      y_pred <- tf$reshape(y_pred, shape = c(-1L))
+      events <- tf$reshape(y_true, shape = c(-1L))
+      haz <- tf$math$exp(y_pred)
+      rev_csum  <- tf$math$cumsum(tf$reverse(haz, list(0L)))
+      risk_csum <- tf$reverse(rev_csum, list(0L))
+      log_risk  <- tf$math$log(risk_csum + 1e-8)
+      -tf$math$reduce_sum((y_pred - log_risk) * events) / (tf$math$reduce_sum(events) + 1e-8)
+    }
+    # Network
+    inp <- keras::layer_input(shape = p, dtype = "float32")
+    x <- inp
+    for (u in hidden) {
+      x <- keras::layer_dense(x, units = u, activation = "relu",
+                              kernel_regularizer = keras::regularizer_l2(l = l2))
+      if (dropout > 0) x <- keras::layer_dropout(x, rate = dropout)
+    }
+    out <- keras::layer_dense(x, units = 1, activation = "linear",
+                              kernel_regularizer = keras::regularizer_l2(l = l2))
+    model <- keras::keras_model(inp, out)
+    model %>% keras::compile(
+      optimizer = keras::optimizer_adam(learning_rate = lr, clipnorm = 1.0, clipvalue = 0.5),
+      loss = cox_ph_loss_safe,
+      run_eagerly = run_eagerly
+    )
+    # Fit
+    ok <- TRUE
+    tryCatch({
+      model %>% keras::fit(
+        x = Xtr_s, y = matrix(ev_tr, ncol = 1),
+        batch_size = nrow(Xtr_s), epochs = epochs,
+        shuffle = FALSE, verbose = verbose,
+        callbacks = list(keras::callback_early_stopping(monitor = "loss",
+                                                        patience = patience, restore_best_weights = TRUE))
+      )
+    }, error = function(e) ok <<- FALSE)
+    if (!ok) return(rep(NA_real_, nrow(test)))
+    # OOB risk scores
+    risk <- as.numeric(model$predict(Xte_s, verbose = as.integer(verbose)))
+    if (!all(is.finite(risk))) {
+      if (any(is.finite(risk))) {
+        med <- stats::median(risk[is.finite(risk)], na.rm = TRUE)
+        risk[!is.finite(risk)] <- med
+      } else {
+        risk <- rep(NA_real_, length(risk))
+      }
+    }
+    risk
+  }
+  message(sprintf("[DeepSurv %s] B=%d", method_name, B))
+  res <- oob_bootstrap(df, B = B, risk_fun = risk_fun,
+                       require_train_events = TRUE, require_oob_events = require_oob_events, verbose = FALSE)
+  tbl <- summarize_boot(model_name = method_name, method_name = "DeepSurv_OOB",
+                        tau = res$tau, c_vec = res$c, auc_vec = res$auc)
+  append_neff(tbl, res)
+}
+
+
+
+# Logistic (censoring ignored): OOB bootstrap
+logit_cindex_boot_oob <- function(
+    df, method_name,
+    B = 500,
+    class_weights = TRUE,
+    maxit = 200
+) {
+  
+  # risk_fun: fit logistic regression on 'train' (Event ~ X), predict P(Event=1) for 'test'
+  risk_fun <- function(train, test) {
+    xtr_df <- train[, setdiff(names(train), c("Event_time","Event")), drop = FALSE]
+    xte_df <- test[,  setdiff(names(test),  c("Event_time","Event")), drop = FALSE]
+    MM     <- stats::model.matrix(~ . - 1, data = rbind(xtr_df, xte_df))
+    ntr    <- nrow(xtr_df)
+    Xtr    <- MM[seq_len(ntr), , drop = FALSE]
+    Xte    <- MM[(ntr + 1L):nrow(MM), , drop = FALSE]
+    ytr    <- as.integer(train$Event)
+    if (length(unique(ytr)) < 2L) return(rep(mean(ytr), nrow(test)))
+    keep <- apply(Xtr, 2, function(z) stats::sd(z, na.rm = TRUE) > 0)
+    if (!any(keep)) return(rep(mean(ytr), nrow(test)))
+    Xtr <- Xtr[, keep, drop = FALSE]
+    Xte <- Xte[, keep, drop = FALSE]
+    w <- NULL
+    if (isTRUE(class_weights)) {
+      n_pos <- sum(ytr == 1L); n_neg <- sum(ytr == 0L)
+      if (n_pos > 0 && n_neg > 0) w <- ifelse(ytr == 1L, n_neg / n_pos, 1)
+    }
+    
+    # Fit logistic regression
+    dtr <- data.frame(y = ytr, Xtr, check.names = FALSE)
+    fit <- tryCatch(stats::glm(y ~ ., data = dtr, family = stats::binomial(), weights = w,
+                               control = list(maxit = maxit)),
+                    error = function(e) NULL)
+    if (is.null(fit)) return(rep(mean(ytr), nrow(test)))
+    pr <- tryCatch(as.numeric(stats::predict(fit, newdata = data.frame(Xte, check.names = FALSE), type = "response")),
+                   error = function(e) rep(mean(ytr), nrow(test)))
+    if (!all(is.finite(pr))) {
+      if (any(is.finite(pr))) {
+        med <- stats::median(pr[is.finite(pr)], na.rm = TRUE)
+        pr[!is.finite(pr)] <- med
+      } else {
+        pr <- rep(mean(ytr), length(pr))
+      }
+    }
+    pr
+  }
+  message(sprintf("[Logit %s] B=%d", method_name, B))
+  res <- oob_bootstrap(df, B = B, risk_fun = risk_fun,
+                       require_train_events = FALSE, require_oob_events = FALSE, verbose = FALSE)
+  tbl <- summarize_boot(model_name = method_name, method_name = "Logit_OOB",
+                        tau = res$tau, c_vec = res$c, auc_vec = res$auc)
+  append_neff(tbl, res)
+}
+
+
+# CoxPH: OOB bootstrap
+coxph_cindex_boot_oob <- function(
+    df, method_name,
+    B = 500,
+    ties = c("efron","breslow","exact"),
+    iter_max = 50,
+    quiet = TRUE
+) {
+  ties <- match.arg(ties)
+  
+  # risk_fun: fit Cox on 'train', return linear predictor for 'test'
+  risk_fun <- function(train, test) {
+    pred_names <- setdiff(names(train), c("Event_time","Event"))
+    keep <- vapply(pred_names, function(nm) stats::sd(train[[nm]], na.rm = TRUE) > 0, logical(1))
+    preds_kept <- pred_names[keep]
+    if (length(preds_kept) == 0L) return(rep(NA_real_, nrow(test)))
+    fml <- stats::as.formula(
+      paste0("survival::Surv(Event_time, Event) ~ ", paste(preds_kept, collapse = " + "))
+    )
+    fit_call <- function() survival::coxph(
+      fml, data = train, ties = ties,
+      control = survival::coxph.control(iter.max = iter_max),
+      x = FALSE, y = FALSE
+    )
+    fit <- tryCatch(if (quiet) suppressWarnings(fit_call()) else fit_call(),
+                    error = function(e) NULL)
+    if (is.null(fit)) return(rep(NA_real_, nrow(test)))
+    
+    # LP on OOB (replace non-finite with finite median if needed)
+    lp <- tryCatch(as.numeric(stats::predict(fit, newdata = test, type = "lp")),
+                   error = function(e) rep(NA_real_, nrow(test)))
+    if (!all(is.finite(lp))) {
+      if (any(is.finite(lp))) {
+        med <- stats::median(lp[is.finite(lp)], na.rm = TRUE)
+        lp[!is.finite(lp)] <- med
+      }
+    }
+    lp
+  }
+  message(sprintf("[CoxPH %s] B=%d, ties=%s", method_name, B, ties))
+  res <- oob_bootstrap(df, B = B, risk_fun = risk_fun,
+                       require_train_events = TRUE, require_oob_events = FALSE, verbose = FALSE)
+  tbl <- summarize_boot(model_name = method_name, method_name = "CoxPH_OOB",
+                        tau = res$tau, c_vec = res$c, auc_vec = res$auc)
+  append_neff(tbl, res)
+}
