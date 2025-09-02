@@ -478,19 +478,6 @@ summarize_boot <- function(model_name, method_name, tau, c_vec, auc_vec) {
   )
 }
 
-# N_eff and frac_eff
-append_neff <- function(tbl, res) {
-  n_eff_c   <- sum(is.finite(res$c))
-  n_eff_auc <- sum(is.finite(res$auc))
-  B_tot     <- length(res$c)
-  dplyr::mutate(
-    tbl,
-    B        = B_tot,
-    n_eff    = c(n_eff_c, n_eff_auc),
-    frac_eff = n_eff / B
-  )
-}
-
 # RSF: OOB bootstrap
 rsf_cindex_boot_oob <- function(
     df, method_name,
@@ -765,3 +752,4 @@ coxph_cindex_boot_oob <- function(
                         tau = res$tau, c_vec = res$c, auc_vec = res$auc)
   append_neff(tbl, res)
 }
+
