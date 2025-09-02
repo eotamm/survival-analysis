@@ -1036,7 +1036,7 @@ The figure indicates that all three methods produce higher predicted risk scores
 
 # Comparing different survival models across transformations
 
-We compare five survival learners: Random Survival Forests, XGBoost with a Cox objective, DeepSurv, a logistic baseline scored with survival metrics, and a classical Cox proportional hazards model. For computational reasons the Cox model is frequentist rather than Bayesian. All methods are evaluated with the same out-of-bag bootstrap; we report Harrell’s C and time-dependent AUC at the median event time, using bootstrap medians and 95% quantile intervals.
+We compare five survival learners: Random Survival Forests, XGBoost with a Cox objective, DeepSurv, a logistic regression, and a classical Cox proportional hazards model. For computational reasons the Cox model is frequentist rather than Bayesian. All methods are evaluated with the same out-of-bag bootstrap; we report Harrell’s C and time-dependent AUC at the median event time, using bootstrap medians and 95% quantile intervals.
 
 ``` r
 # Combine all models
@@ -1143,3 +1143,4 @@ print(auc_plot)
 ![](figures/unnamed-chunk-27-1.png)
 
 Across the different feature transformations, LRA shows slightly higher C-index values compared to the others, and the same trend is observed for the time-dependent AUC.
+
