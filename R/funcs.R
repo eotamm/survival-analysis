@@ -507,7 +507,6 @@ rsf_cindex_boot_oob <- function(
                        require_train_events = TRUE, require_oob_events = FALSE, verbose = FALSE)
   tbl <- summarize_boot(model_name = method_name, method_name = "RSF_OOB",
                         tau = res$tau, c_vec = res$c, auc_vec = res$auc)
-  append_neff(tbl, res)
 }
 
 
@@ -551,7 +550,6 @@ xgb_cox_cindex_boot_oob <- function(
                        require_train_events = TRUE, require_oob_events = FALSE, verbose = FALSE)
   tbl <- summarize_boot(model_name = method_name, method_name = "XGB_Cox_OOB",
                         tau = res$tau, c_vec = res$c, auc_vec = res$auc)
-  append_neff(tbl, res)
 }
 
 
@@ -646,7 +644,6 @@ deepsurv_cindex_boot_oob <- function(
                        require_train_events = TRUE, require_oob_events = require_oob_events, verbose = FALSE)
   tbl <- summarize_boot(model_name = method_name, method_name = "DeepSurv_OOB",
                         tau = res$tau, c_vec = res$c, auc_vec = res$auc)
-  append_neff(tbl, res)
 }
 
 
@@ -702,7 +699,6 @@ logit_cindex_boot_oob <- function(
                        require_train_events = FALSE, require_oob_events = FALSE, verbose = FALSE)
   tbl <- summarize_boot(model_name = method_name, method_name = "Logit_OOB",
                         tau = res$tau, c_vec = res$c, auc_vec = res$auc)
-  append_neff(tbl, res)
 }
 
 
@@ -750,6 +746,6 @@ coxph_cindex_boot_oob <- function(
                        require_train_events = TRUE, require_oob_events = FALSE, verbose = FALSE)
   tbl <- summarize_boot(model_name = method_name, method_name = "CoxPH_OOB",
                         tau = res$tau, c_vec = res$c, auc_vec = res$auc)
-  append_neff(tbl, res)
 }
+
 
