@@ -4,8 +4,10 @@ source("funcs.R")
 # Load and preprocess the data
 source("data.R")
 
-# Fit the survival model
+# TabPfn function and fit the survival models
+source("tabpfnfunc.R")
 source("model.R")
 
 # Render the Quarto report
 quarto::quarto_render("survival.qmd")
+
