@@ -14,7 +14,7 @@ Key steps include:
 - Visualization of survival using Kaplan–Meier curves
 - Probabilistic survival estimation using the Imprecise Dirichlet Process (IDP)
 - Construction of centered log-ratio (CLR), robust CLR (rCLR), pairwise log-ratio analysis (LRA), additive log-ratio (ALR), presence/absence (PA), total sum scaling (TSS), log-transformed TSS (logTSS), and arcsin square root (ASIN) and comparing them.
-- Multiple survival modeling approaches are compared (CoxPH, Random Survival Forests, XGB-Cox, DeepSurv, and a logistic-model that ignores censoring).
+- Multiple survival modeling approaches are compared (CoxPH, Random Survival Forests, XGB-Cox, DeepSurv CatBoost, TabPFN, and a logistic-model that ignores censoring).
 
 ## Files
 
@@ -22,6 +22,7 @@ Key steps include:
 - `data.R`: Loads and preprocesses microbiome and survival data.
 - `model.R`: Fits a Bayesian Cox model using selected microbial predictors.
 - `funcs.R`: Defines reusable functions for data transformation, log-ratio construction and model fitting.
+- 'tabpfnfunc.R': Includes tabpfn function
 - `survival.qmd`: Generates the final report (Quarto).
 - `survival.md`: Generated report.
 - `main.R`: Wrapper script to execute all of the above in correct order.
