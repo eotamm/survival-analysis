@@ -71,3 +71,15 @@ df_logtss  <- extract_top_features_by_transformation(tse, method = "logtss",  to
 df_asin    <- extract_top_features_by_transformation(tse, method = "asin",    top_n = 20)
 df_alr     <- extract_top_features_by_transformation(tse, method = "alr",     top_n = 20)
 
+# All features data
+df_clr_all       <- extract_all_features_by_transformation(tse, method = "clr")
+df_rclr_all      <- extract_all_features_by_transformation(tse, method = "rclr")
+df_logabund_all  <- extract_all_features_by_transformation(tse, method = "log_abund")
+df_lra_all       <- extract_all_features_by_transformation(tse, method = "lra")
+df_pa_all        <- extract_all_features_by_transformation(tse, method = "pa")
+df_tss_all       <- extract_all_features_by_transformation(tse, method = "tss")
+df_logtss_all    <- extract_all_features_by_transformation(tse, method = "logtss")
+df_asin_all      <- extract_all_features_by_transformation(tse, method = "asin")
+df_alr_all       <- extract_all_features_by_transformation(tse, method = "alr")
+
+
