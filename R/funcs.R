@@ -189,6 +189,91 @@ fit_model <- function(df, model_name, prior_type = c("normal", "horseshoe")) {
 }
 
 
+                    # Prepare data for analysis
+extract_all_features_by_transformation <- function(tse,
+                                                   method = c("clr","rclr","log_abund","lra","pa","tss","logtss","asin","alr"),
+                                                   pseudocount = 1e-6,
+                                                   alr_ref = "g_Turicibacter") {
+  method <- match.arg(method)
+  
+  # Apply transformation
+  tse_tx <- switch(
+    method,
+    clr  = transformAssay(tse, method = "clr",  assay.type = "counts", pseudocount = pseudocount, name = "clr"),
+    rclr = transformAssay(tse, method = "rclr", assay.type = "counts", pseudocount = pseudocount, name = "rclr"),
+    log_abund = tse |>
+      transformAssay(method = "relabundance", assay.type = "counts", name = "relabundance") |>
+      transformAssay(method = "log", assay.type = "relabundance", pseudocount = pseudocount, name = "log_abund"),
+    lra = tse |>
+      transformAssay(method = "relabundance", assay.type = "counts", name = "relabundance") |>
+      transformAssay(method = "log", assay.type = "relabundance", pseudocount = pseudocount, name = "log_abund") |>
+      transformAssay(method = "difference", assay.type = "log_abund", name = "logratios", MARGIN = 1L),
+    pa = {
+      out <- transformAssay(tse, method = "relabundance", assay.type = "counts", name = "tss")
+      ra  <- assay(out, "tss")
+      assay(out, "pa") <- (ra >= 0.001) * 1  # 0.1%
+      out
+    },
+    tss    = transformAssay(tse, method = "relabundance", assay.type = "counts", name = "tss"),
+    logtss = tse |>
+      transformAssay(method = "relabundance", assay.type = "counts", name = "tss") |>
+      transformAssay(method = "log", assay.type = "tss", pseudocount = pseudocount, name = "logtss"),
+    asin = {
+      tmp <- transformAssay(tse, method = "relabundance", assay.type = "counts", name = "tss")
+      asin_mat <- asin(sqrt(assay(tmp, "tss")))
+      attr(asin_mat, "Event")      <- colData(tmp)$Event
+      attr(asin_mat, "Event_time") <- colData(tmp)$Event_time
+      asin_mat
+    },
+    alr = transformAssay(tse, method = "alr", assay.type = "counts",
+                         pseudocount = pseudocount, name = "alr", ref_taxa = alr_ref)
+  )
+  
+  # Extract assay matrix
+  M <- if (method == "lra") {
+    assay(altExp(tse_tx, "logratios"))
+  } else if (method == "asin") {
+    tse_tx
+  } else {
+    assay(tse_tx, method)
+  }
+  
+  df <- as.data.frame(t(as.matrix(M)))
+  
+  # Clean column names if helper exists
+  if (exists("clean_column_names")) df <- clean_column_names(df)
+  
+  # ALR: drop the reference taxon column so it is not used as a feature
+  if (method == "alr") {
+    canon <- function(x) gsub("[^a-z0-9]+", "", tolower(x))
+    ref_variants <- unique(c(
+      alr_ref,
+      sub("__", "_", alr_ref, fixed = TRUE),
+      sub("^g__", "g_", alr_ref),
+      make.names(alr_ref)
+    ))
+    ref_canon <- canon(ref_variants)
+    drop_idx <- which(canon(colnames(df)) %in% ref_canon)
+    if (length(drop_idx)) df <- df[, -drop_idx, drop = FALSE]
+  }
+  
+  # Remove all-NA columns
+  keep <- colSums(!is.na(df)) > 0
+  df <- df[, keep, drop = FALSE]
+  
+  # Add survival metadata
+  if (method == "asin") {
+    df$Event      <- attr(M, "Event")
+    df$Event_time <- attr(M, "Event_time")
+  } else {
+    df$Event      <- colData(tse_tx)$Event
+    df$Event_time <- colData(tse_tx)$Event_time
+  }
+  
+  df
+}
+
+                    
 # Prepare data for analysis
 extract_top_features_by_transformation <- function(tse,
                                                    method = c("clr", "rclr", "log_abund", "lra", "pa", "tss", "logtss", "asin", "alr"),
@@ -842,4 +927,5 @@ xgb_cox_cindex_cv5_grid_tune_once <- function(
   res <- cv5_cindex(df, risk_fun, seed = seed, reverse = TRUE, K = K, fold_id = fold_id)
   summarize_cv(method_name, sprintf("XGB_Cox_%dCV_Grid_TunedOnce", K), res)
 }
+
 
