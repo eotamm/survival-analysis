@@ -146,57 +146,109 @@ c_all <- dplyr::bind_rows(
 saveRDS(c_all, file.path("model_result", "cindex_posterior_all.rds"))
 
 
-
-# List of transformations
+# Input datasets for each transformation
 transforms <- list(
-  CLR    = df_clr,
-  rCLR   = df_rclr,
-  logTSS = df_logtss,
-  LRA    = df_lra,
-  PA     = df_pa,
-  TSS    = df_tss,
-  Asin   = df_asin,
-  ALR    = df_alr
+  CLR    = df_clr_all,
+  rCLR   = df_rclr_all,
+  logTSS = df_logtss_all,
+  LRA    = df_lra_all,
+  PA     = df_pa_all,
+  TSS    = df_tss_all,
+  Asin   = df_asin_all,
+  ALR    = df_alr_all
 )
 
-# Run settings
-B_boot      <- 1000
-set.seed(1)
+# CV setup
+CV_SEED <- 1
+K_FOLDS <- 5
+set.seed(CV_SEED)
 
-# Run different models
-cox_res <- purrr::imap_dfr(transforms, ~ coxph_cindex_boot_oob(
-  df = .x, method_name = .y, B = B_boot, ties = "efron"
-))
+# Shared folds for all transforms (same order/length across data frames)
+global_folds <- make_stratified_folds(df_clr$Event, K = K_FOLDS, seed = CV_SEED)
 
-rsf_res <- purrr::imap_dfr(transforms, ~ rsf_cindex_boot_oob(
-  df = .x, method_name = .y, B = B_boot
-))
+# CoxPH
+cox_res <- purrr::imap_dfr(
+  transforms,
+  ~ coxph_cindex_cv5(.x, .y, ties = "efron",
+                     seed = CV_SEED, K = K_FOLDS, fold_id = global_folds)
+)
 
-xgb_res <- purrr::imap_dfr(transforms, ~ xgb_cox_cindex_boot_oob(
-  df = .x, method_name = .y, B = B_boot
-))
+# Random Survival Forest
+rsf_res <- purrr::imap_dfr(
+  transforms,
+  ~ rsf_cindex_cv5(.x, .y, seed = CV_SEED, K = K_FOLDS, fold_id = global_folds)
+)
 
-deepsurv_res <- purrr::imap_dfr(transforms, ~ deepsurv_cindex_boot_oob(
-  df = .x, method_name = .y,
-  B = B_boot,
-  hidden = c(32, 16), dropout = 0.1, l2 = 1e-4,
-  lr = 1e-3, epochs = 120, patience = 12,
-  verbose = 0, run_eagerly = TRUE
-))
+# Logistic (binary)
+logit_res <- purrr::imap_dfr(
+  transforms,
+  ~ logit_cindex_cv5(.x, .y, maxit = 200,
+                     seed = CV_SEED, K = K_FOLDS, fold_id = global_folds)
+)
 
-logit_res <- purrr::imap_dfr(transforms, ~ logit_cindex_boot_oob(
-  df = .x, method_name = .y, B = B_boot, class_weights = TRUE
-))
+# DeepSurv
+deepsurv_res <- purrr::imap_dfr(
+  transforms,
+  ~ deepsurv_cindex_cv5(
+    .x, .y,
+    hidden = c(32, 16), dropout = 0.1, l2 = 1e-4,
+    lr = 1e-3, epochs = 120, patience = 12,
+    verbose = 0, run_eagerly = TRUE,
+    seed = CV_SEED, K = K_FOLDS, fold_id = global_folds
+  )
+)
 
-# Save results
+# CatBoost (binomial)
+cb_res <- purrr::imap_dfr(
+  transforms,
+  ~ catboost_bin_cindex_cv5(.x, .y, seed = CV_SEED, K = K_FOLDS, fold_id = global_folds)
+)
+
+# XGBoost Cox with one-time grid tuning (inner 3-fold), then outer K-fold
+xgb_res <- purrr::imap_dfr(
+  transforms,
+  ~ xgb_cox_cindex_cv5_grid_tune_once(
+    df = .x, method_name = .y,
+    seed = CV_SEED, K = K_FOLDS, k_inner = 3,
+    depth_grid     = c(3L, 4L),
+    min_child_grid = c(4L, 8L),
+    subsample_grid = c(0.70, 0.85, 1.00),
+    colsample_grid = c(0.50, 0.70, 0.90),
+    eta_grid       = c(0.05, 0.08, 0.12),
+    lambda_grid    = c(0, 2, 5, 10),
+    alpha_grid     = c(0, 0.10, 0.50, 1.00),
+    nrounds_max = 2000, early_stopping_rounds = 50,
+    fold_id = global_folds,
+    use_gpu = FALSE
+  )
+)
+
+# TabPFN (binary)
+tabpfn_res <- purrr::imap_dfr(
+  transforms,
+  ~ tabpfn_bin_cindex_cv5(
+    df = .x, method_name = .y,
+    seed = CV_SEED, K = K_FOLDS, fold_id = global_folds,
+    device = "cpu", ensemble = 32
+  )
+)
+
+# Combine all model summaries into one
+all_models <- dplyr::bind_rows(
+  cox_res, rsf_res, logit_res, deepsurv_res, xgb_res, cb_res, tabpfn_res
+)
+
+# Save 
 out_dir <- file.path("model_result", "results")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-saveRDS(rsf_res,      file.path(out_dir, "rsf_cindex_oob_boot_summary.rds"))
-saveRDS(xgb_res,      file.path(out_dir, "xgb_cindex_oob_boot_summary.rds"))
-saveRDS(deepsurv_res, file.path(out_dir, "deepsurv_cindex_oob_boot_summary.rds"))
-saveRDS(logit_res,    file.path(out_dir, "logit_cindex_oob_boot_summary.rds"))
-saveRDS(cox_res,      file.path(out_dir, "coxph_cindex_oob_boot_summary.rds"))
+tag <- paste0("cv", K_FOLDS)
+saveRDS(cox_res,       file.path(out_dir, paste0("coxph_cindex_",       tag, "_summary.rds")))
+saveRDS(rsf_res,       file.path(out_dir, paste0("rsf_cindex_",         tag, "_summary.rds")))
+saveRDS(logit_res,     file.path(out_dir, paste0("logit_cindex_",       tag, "_summary.rds")))
+saveRDS(deepsurv_res,  file.path(out_dir, paste0("deepsurv_cindex_",    tag, "_summary.rds")))
+saveRDS(xgb_res,       file.path(out_dir, paste0("xgb_cindex_",         tag, "_summary.rds")))
+saveRDS(cb_res,        file.path(out_dir, paste0("catboost_bin_cindex_",tag, "_summary.rds")))
+saveRDS(tabpfn_res,    file.path(out_dir, paste0("tabpfn_bin_cindex_",  tag, "_summary.rds")))
 
-
-
-
+# Combined 
+saveRDS(all_models, file.path(out_dir, paste0("all_models_", tag, "_with_ci.rds")))
