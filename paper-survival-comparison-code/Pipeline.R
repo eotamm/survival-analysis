@@ -159,7 +159,7 @@ coxnet_list <- purrr::imap(
   transforms,
   ~ coxnet_cindex_cv5(
     df = .x, method_name = .y,
-    alpha = 0,
+    alpha = 0,    # Ridge=0, Lasso=1
     seed = CV_SEED, K = K_FOLDS, fold_id = global_folds,
     event_col = EVENT_COL, time_col = TIME_COL,
     shap = TRUE, shap_nsim = 16, shap_bg_max = 32, shap_verbose = TRUE
@@ -487,5 +487,6 @@ for (nm in names(model_keys)) {
   assign(paste0(nm, "_grids"), grid, envir = .GlobalEnv)
   saveRDS(grid, file.path(out_dir, sprintf("grid_%s.rds", key)))
 }
+
 
 
