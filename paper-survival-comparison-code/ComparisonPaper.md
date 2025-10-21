@@ -118,6 +118,17 @@ shap_agg_all <- dplyr::bind_rows(
   cb_shap_agg, deepsurv_shap_agg, xgb_shap_agg, tabpfn_shap_agg,
   permanova_shap_agg
 )
+
+
+# Subsampling and truncation
+coxnet_grids    <- readRDS(file.path(out_dir, "grid_coxnet.rds"))
+rsf_grids       <- readRDS(file.path(out_dir, "grid_rsf.rds"))
+logit_grids     <- readRDS(file.path(out_dir, "grid_logit.rds"))
+catboost_grids  <- readRDS(file.path(out_dir, "grid_catboost.rds"))
+tabpfn_grids    <- readRDS(file.path(out_dir, "grid_tabpfn.rds"))
+deepsurv_grids  <- readRDS(file.path(out_dir, "grid_deepsurv.rds"))
+xgb_grids       <- readRDS(file.path(out_dir, "grid_xgb.rds"))
+permanova_grids <- readRDS(file.path(out_dir, "grid_permanova.rds"))
 ```
 
 # Visualizations
@@ -232,6 +243,96 @@ ggplot(folds_all, aes(x = transform, y = value)) +
 
 ![](figures/fig-perfbox-1.png)
 
+``` r
+# Pairwise C-difference heatmap with significance stars (p ≤ 0.05)
+# - x: transform, y: transform
+# - fill: mean ΔC (row − column) across CV folds
+# - star: Wilcoxon signed-rank p ≤ 0.05
+# - panel: model
+
+# Fold-level C (excluded PERMANOVA)
+c_folds <- foldC_all %>%
+  transmute(transform = model, method, fold, C = as.numeric(C)) %>%
+  filter(is.finite(C)) %>%
+  mutate(
+    method = factor(
+      method,
+      levels = c("CoxNet","RSF","XGB_Cox","DeepSurv","Logit","CatBoost","TabPFN")[
+        c("CoxNet","RSF","XGB_Cox","DeepSurv","Logit","CatBoost","TabPFN") %in% method
+      ]
+    )
+  )
+
+# Order transforms by median C across methods
+t_order <- c_folds %>%
+  group_by(transform) %>%
+  summarise(medC = median(C, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(medC)) %>%
+  pull(transform)
+c_folds <- c_folds %>% mutate(transform = factor(transform, levels = t_order))
+
+# All pairwise (t1, t2)
+pairs_long <- c_folds %>%
+  dplyr::select(method, fold, t1 = transform, C1 = C) %>%
+  dplyr::inner_join(
+    c_folds %>% dplyr::select(method, fold, t2 = transform, C2 = C),
+    by = c("method","fold"),
+    relationship = "many-to-many"
+  ) %>%
+  dplyr::mutate(diff = C1 - C2)
+
+
+# Mean differnece of C and Wilcoxon signed-rank
+summ_pairs <- pairs_long %>%
+  dplyr::filter(t1 != t2) %>%
+  dplyr::group_by(method, t1, t2) %>%
+  dplyr::summarise(
+    mean_diff = mean(diff, na.rm = TRUE),
+    p = suppressWarnings(wilcox.test(na.omit(diff), mu = 0, exact = FALSE)$p.value),
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    star = ifelse(!is.na(p) & p <= 0.05, "*", "")     ### p <= 0.05
+  )
+
+# Complete grid
+to_plot <- tidyr::complete(
+  summ_pairs,
+  method,
+  t1 = factor(t_order, levels = t_order),
+  t2 = factor(t_order, levels = t_order),
+  fill = list(mean_diff = NA_real_, p = NA_real_, star = "")
+) %>%
+  mutate(
+    t1 = factor(t1, levels = t_order),
+    t2 = factor(t2, levels = t_order)
+  )
+
+# Plot
+ggplot(to_plot, aes(x = t2, y = t1, fill = mean_diff)) +
+  geom_tile() +
+  geom_text(aes(label = star), size = 3) +
+  scale_fill_gradient2(
+    name = "\u0394C (row − col)",
+    low = "steelblue", mid = "white", high = "firebrick",
+    midpoint = 0, na.value = "grey95"
+  ) +
+  facet_wrap(~ method, ncol = 3) +
+  coord_equal() +
+  labs(
+    title = "Heatmap of pairwise differences in Harrell's C",
+    subtitle = "Cells show mean \u0394C across CV folds; star marks Wilcoxon signed-rank p \u2264 0.05",
+    x = "Column transform", y = "Row transform"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+![](figures/fig-pairwise-1.png)
+
 ## Shapley heatmap
 
 ``` r
@@ -267,4 +368,188 @@ ggplot(coverage_tbl, aes(x = transform, y = model_key, fill = coverage)) +
 
 ![](figures/fig-shap-1.png)
 
-With a zero threshold, most models light up almost all features; CoxNet prunes the most, with XGBoost and Logit trimming some as well.
+With a zero importance threshold, most models flag nearly all features, XGBoost prunes the most, and Logit prunes slightly under TSS.
+
+``` r
+# ---- SHAP correlation heatmap with significance stars (p ≤ 0.05) ----
+# - x: transform, y: transform
+# - fill: correlation of mean |SHAP| across features (per model)
+# - star: Wilcoxon signed-rank p ≤ 0.05 on feature-wise differences
+# - panel: model
+
+corr_method <- "spearman"   # "pearson" or "spearman"
+alpha_star  <- 0.05
+
+shap_agg_all <- shap_long_all %>%
+  dplyr::group_by(model_key, transform, feature) %>%
+  dplyr::summarise(mean_abs = mean(abs(shap), na.rm = TRUE), .groups = "drop")
+
+# Order transforms by overall importance (sum of mean_abs across models & features)
+t_order <- shap_agg_all %>%
+  group_by(transform) %>%
+  summarise(total_imp = sum(mean_abs, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(total_imp)) %>%
+  pull(transform)
+
+# Function: per-model pairwise transform correlations + Wilcoxon test on differences
+one_model_corr <- function(df_model) {
+  wide <- df_model %>%
+    dplyr::select(transform, feature, mean_abs) %>%
+    dplyr::mutate(
+      transform = factor(transform, levels = t_order),
+      feature   = factor(feature,   levels = unique(feature))
+    ) %>%
+    tidyr::pivot_wider(names_from = transform, values_from = mean_abs, values_fill = 0)
+
+  M  <- as.matrix(wide[, setdiff(names(wide), "feature"), drop = FALSE])
+  tr <- colnames(M)
+
+  cor_mat <- suppressWarnings(stats::cor(M, method = corr_method, use = "pairwise.complete.obs"))
+
+  expand.grid(t1 = tr, t2 = tr, stringsAsFactors = FALSE) %>%
+    dplyr::mutate(
+      cor = purrr::map2_dbl(t1, t2, ~ cor_mat[.x, .y]),
+      p   = purrr::map2_dbl(t1, t2, ~ {
+        d <- M[, .x] - M[, .y]
+        d <- stats::na.omit(d)
+        if (length(d) < 1L) NA_real_
+        else suppressWarnings(stats::wilcox.test(d, mu = 0, exact = FALSE)$p.value)
+      }),
+      star = ifelse(!is.na(p) & p <= alpha_star & t1 != t2, "*", "")
+    )
+}
+
+# Compute per-model grids
+corr_all <- shap_agg_all %>%
+  group_by(model_key) %>%
+  group_modify(~ one_model_corr(.x)) %>%
+  ungroup() %>%
+  mutate(
+    t1 = factor(t1, levels = t_order),
+    t2 = factor(t2, levels = t_order),
+    model_key = factor(
+      model_key,
+      levels = c("coxnet","rsf","xgb_cox","deepsurv","logit","catboost","tabpfn","permanova")[
+        c("coxnet","rsf","xgb_cox","deepsurv","logit","catboost","tabpfn","permanova") %in% model_key
+      ]
+    )
+  )
+
+# If you want blank diagonal fill
+# corr_all <- corr_all %>%
+  # mutate(cor = ifelse(as.character(t1) == as.character(t2), NA_real_, cor),
+         # star = ifelse(as.character(t1) == as.character(t2), "", star))
+
+# Plot
+ggplot(corr_all, aes(x = t2, y = t1, fill = cor)) +
+  geom_tile() +
+  geom_text(aes(label = star), size = 3) +
+  scale_fill_gradient2(
+    name = paste0("Correlation (", corr_method, ")"),
+    low = "steelblue", mid = "white", high = "firebrick",
+    midpoint = 0, limits = c(-1, 1), na.value = "grey95"
+  ) +
+  facet_wrap(~ model_key, ncol = 3) +
+  coord_equal() +
+  labs(
+    title = "Feature-wise SHAP similarity across transforms",
+    subtitle = paste0("Cells = correlation of mean |SHAP| vectors; star = Wilcoxon p \u2264 ", alpha_star),
+    x = "Column transform", y = "Row transform"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+![](figures/fig-shapcor-1.png)
+
+## Subsampling and truncation
+
+``` r
+# ---- Subsampling: performance vs. sample subset (%), per transform & model ----
+# - x: sample subset (% of rows kept)
+# - y: performance estimate (C for C-models; R² for PERMANOVA)
+# - color: transformation
+# - panel: model
+
+model_keys <- c(
+  catboost  = "catboost",
+  coxnet    = "coxnet",
+  deepsurv  = "deepsurv",
+  logit     = "logit",
+  rsf       = "rsf",
+  tabpfn    = "tabpfn",
+  xgb       = "xgb",
+  permanova = "permanova"
+)
+
+model_levels <- c("CatBoost","CoxNet","DeepSurv","Logit","RSF","TabPFN","XGB_Cox","PERMANOVA")
+pick_cols_sub <- c("model","transform","estimate","sample_pct")
+
+metrics_sub_all <- purrr::map_dfr(names(model_keys), function(nm) {
+  g <- get(paste0(nm, "_grids"), envir = .GlobalEnv)
+  g$sub_metrics %>%
+    select(any_of(pick_cols_sub)) %>%
+    filter(is.finite(estimate), is.finite(sample_pct)) %>%
+    mutate(model = factor(model, levels = model_levels))
+})
+
+p_sub <- metrics_sub_all %>%
+  mutate(sample_pct = 100 * sample_pct) %>%
+  arrange(model, transform, sample_pct) %>%
+  ggplot(aes(x = sample_pct, y = estimate, color = transform, group = transform)) +
+  geom_line(alpha = 0.7) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ model, ncol = 3, scales = "free_y") +
+  labs(
+    title = "Performance vs. sample subset (subsampling)",
+    x = "Sample subset (%)",
+    y = "C-statistic (PERMANOVA shows R²)",
+    color = "Transform"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank())
+
+print(p_sub)
+```
+
+![](figures/fig-subsample-1.png)
+
+``` r
+# ---- Truncation: performance vs. follow-up time, per transform & model ----
+# - x: follow-up time (truncation threshold)
+# - y: performance estimate (C for C-models; R² for PERMANOVA)
+# - color: transformation
+# - panel: model
+
+pick_cols_tr <- c("model","transform","estimate","followup_time")
+
+metrics_tr_all <- purrr::map_dfr(names(model_keys), function(nm) {
+  g <- get(paste0(nm, "_grids"), envir = .GlobalEnv)
+  g$tr_metrics %>%
+    select(any_of(pick_cols_tr)) %>%
+    filter(is.finite(estimate), is.finite(followup_time)) %>%
+    mutate(model = factor(model, levels = model_levels))
+})
+
+p_trunc <- metrics_tr_all %>%
+  arrange(model, transform, followup_time) %>%
+  ggplot(aes(x = followup_time, y = estimate, color = transform, group = transform)) +
+  geom_line(alpha = 0.7) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ model, ncol = 3, scales = "free_y") +
+  labs(
+    title = "Performance vs. follow-up time (truncation)",
+    x = "Follow-up time",
+    y = "C-statistic (PERMANOVA shows R²)",
+    color = "Transform"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank())
+
+print(p_trunc)
+```
+
+![](figures/fig-truncation-1.png)

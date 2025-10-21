@@ -159,7 +159,7 @@ coxnet_list <- purrr::imap(
   transforms,
   ~ coxnet_cindex_cv5(
     df = .x, method_name = .y,
-    alpha = 1,
+    alpha = 0,
     seed = CV_SEED, K = K_FOLDS, fold_id = global_folds,
     event_col = EVENT_COL, time_col = TIME_COL,
     shap = TRUE, shap_nsim = 16, shap_bg_max = 32, shap_verbose = TRUE
@@ -255,9 +255,9 @@ tabpfn_list <- purrr::imap(
   ~ tabpfn_bin_cindex_cv5(
     df = .x, method_name = .y,
     seed = CV_SEED, K = K_FOLDS, fold_id = global_folds,
-    device = "cpu", ensemble = 4,
+    device = "cpu", ensemble = 1,
     event_col = EVENT_COL, time_col = TIME_COL,
-    shap = TRUE, shap_nsim = 4, shap_bg_max = 32
+    shap = TRUE, shap_nsim = 2, shap_bg_max = 16
   )
 )
 tabpfn_res <- dplyr::bind_rows(tabpfn_list)
@@ -419,7 +419,8 @@ shap_long_all <- dplyr::bind_rows(
   coxnet_shap_long, rsf_shap_long, logit_shap_long,
   cb_shap_long, deepsurv_shap_long, xgb_shap_long, tabpfn_shap_long,
   permanova_shap_long
-)
+) %>% dplyr::select(-dplyr::any_of(".row_id"))
+
 
 shap_agg_all <- dplyr::bind_rows(
   coxnet_shap_agg, rsf_shap_agg, logit_shap_agg,
@@ -427,5 +428,64 @@ shap_agg_all <- dplyr::bind_rows(
   permanova_shap_agg
 )
 
+
+
+
+## Subsample & truncation (restart R first; TabPFN may conflict with tensorflow from DeepSurv)
+# Subsample percentages 
+p_grid <- c(0.20, 0.40, 0.60, 0.80, 1.00)
+
+# Match truncation times to the same percent levels of follow-up distribution
+t_vec  <- df_clr[[TIME_COL]]
+t_grid <- as.numeric(stats::quantile(t_vec, probs = p_grid, na.rm = TRUE, type = 7))
+
+# Run all models
+run_coxnet_once(p_grid, t_grid, EVENT_COL, TIME_COL)
+run_rsf_once(p_grid, t_grid, EVENT_COL, TIME_COL)
+run_logit_once(p_grid, t_grid, EVENT_COL, TIME_COL)
+run_catboost_once(p_grid, t_grid, EVENT_COL, TIME_COL)
+run_tabpfn_once(p_grid, t_grid, EVENT_COL, TIME_COL)
+run_deepsurv_once(p_grid, t_grid, EVENT_COL, TIME_COL)
+run_xgb_once(p_grid, t_grid, EVENT_COL, TIME_COL)
+run_permanova_once(p_grid, t_grid, EVENT_COL, TIME_COL)
+
+
+# Folder
+out_dir <- file.path("model_result", "shap_outputs")
+
+# Read all 4 files per model
+load_one_model <- function(key) {
+  fold_tag <- if (tolower(key) == "permanova") "foldR2" else "foldC"
+  list(
+    sub_metrics = readRDS(file.path(out_dir, sprintf("metrics_subsample_%s.rds",  key))),
+    sub_folds   = readRDS(file.path(out_dir, sprintf("%s_subsample_%s.rds",       fold_tag, key))),
+    tr_metrics  = readRDS(file.path(out_dir, sprintf("metrics_truncation_%s.rds", key))),
+    tr_folds    = readRDS(file.path(out_dir, sprintf("%s_truncation_%s.rds",      fold_tag, key)))
+  )
+}
+
+model_keys <- c(
+  coxnet    = "coxnet",
+  rsf       = "rsf",
+  logit     = "logit",
+  catboost  = "catboost",
+  tabpfn    = "tabpfn",
+  deepsurv  = "deepsurv",
+  xgb       = "xgb",
+  permanova = "permanova"
+)
+
+# Download to the environment
+for (nm in names(model_keys)) {
+  assign(paste0(nm, "_grids"), load_one_model(model_keys[[nm]]), envir = .GlobalEnv)
+}
+
+# Save each model as a single grid
+for (nm in names(model_keys)) {
+  key   <- model_keys[[nm]]
+  grid  <- load_one_model(key)
+  assign(paste0(nm, "_grids"), grid, envir = .GlobalEnv)
+  saveRDS(grid, file.path(out_dir, sprintf("grid_%s.rds", key)))
+}
 
 
