@@ -52,6 +52,7 @@ library(xgboost)
 library(matrixStats)
 library(catboost)
 library(reticulate)
+library(scales)
 
 # Load funcs
 source("Funcs_cleaned.R")
@@ -67,48 +68,80 @@ coxnet_metrics    <- readRDS(file.path(out_dir, "coxnet_metrics.rds"))
 coxnet_shap_agg   <- readRDS(file.path(out_dir, "coxnet_shap_agg.rds"))
 coxnet_shap_long  <- readRDS(file.path(out_dir, "coxnet_shap_long.rds"))
 coxnet_foldC      <- readRDS(file.path(out_dir, "coxnet_foldC.rds"))
+coxnet_timings    <- readRDS(file.path(out_dir, "coxnet_timings.rds"))
+coxnet_runtime    <- readRDS(file.path(out_dir, "coxnet_runtime.rds"))
+coxnet_list       <- readRDS(file.path(out_dir, "coxnet_list.rds"))
+coxnet_oof        <- readRDS(file.path(out_dir, "coxnet_oof.rds"))
 
 # RSF
 rsf_metrics    <- readRDS(file.path(out_dir, "rsf_metrics.rds"))
 rsf_shap_agg   <- readRDS(file.path(out_dir, "rsf_shap_agg.rds"))
 rsf_shap_long  <- readRDS(file.path(out_dir, "rsf_shap_long.rds"))
 rsf_foldC      <- readRDS(file.path(out_dir, "rsf_foldC.rds"))
+rsf_timings    <- readRDS(file.path(out_dir, "rsf_timings.rds"))
+rsf_runtime    <- readRDS(file.path(out_dir, "rsf_runtime.rds"))
+rsf_list       <- readRDS(file.path(out_dir, "rsf_list.rds"))
+rsf_oof        <- readRDS(file.path(out_dir, "rsf_oof.rds"))
 
 # Logistic
 logit_metrics   <- readRDS(file.path(out_dir, "logit_metrics.rds"))
 logit_shap_agg  <- readRDS(file.path(out_dir, "logit_shap_agg.rds"))
 logit_shap_long <- readRDS(file.path(out_dir, "logit_shap_long.rds"))
 logit_foldC     <- readRDS(file.path(out_dir, "logit_foldC.rds"))
+logit_timings   <- readRDS(file.path(out_dir, "logit_timings.rds"))
+logit_runtime   <- readRDS(file.path(out_dir, "logit_runtime.rds"))
+logit_list      <- readRDS(file.path(out_dir, "logit_list.rds"))
+logit_oof       <- readRDS(file.path(out_dir, "logit_oof.rds"))
 
 # CatBoost
 cb_metrics    <- readRDS(file.path(out_dir, "cb_metrics.rds"))
 cb_shap_agg   <- readRDS(file.path(out_dir, "cb_shap_agg.rds"))
 cb_shap_long  <- readRDS(file.path(out_dir, "cb_shap_long.rds"))
 cb_foldC      <- readRDS(file.path(out_dir, "cb_foldC.rds"))
+cb_timings    <- readRDS(file.path(out_dir, "cb_timings.rds"))
+cb_runtime    <- readRDS(file.path(out_dir, "cb_runtime.rds"))
+cb_list       <- readRDS(file.path(out_dir, "cb_list.rds"))
+cb_oof        <- readRDS(file.path(out_dir, "cb_oof.rds"))
 
 # DeepSurv
 deepsurv_metrics   <- readRDS(file.path(out_dir, "deepsurv_metrics.rds"))
 deepsurv_shap_agg  <- readRDS(file.path(out_dir, "deepsurv_shap_agg.rds"))
 deepsurv_shap_long <- readRDS(file.path(out_dir, "deepsurv_shap_long.rds"))
 deepsurv_foldC     <- readRDS(file.path(out_dir, "deepsurv_foldC.rds"))
+deepsurv_timings   <- readRDS(file.path(out_dir, "deepsurv_timings.rds"))
+deepsurv_runtime   <- readRDS(file.path(out_dir, "deepsurv_runtime.rds"))
+deepsurv_list      <- readRDS(file.path(out_dir, "deepsurv_list.rds"))
+deepsurv_oof       <- readRDS(file.path(out_dir, "deepsurv_oof.rds"))
 
 # XGBoost Cox
 xgb_metrics    <- readRDS(file.path(out_dir, "xgb_metrics.rds"))
 xgb_shap_agg   <- readRDS(file.path(out_dir, "xgb_shap_agg.rds"))
 xgb_shap_long  <- readRDS(file.path(out_dir, "xgb_shap_long.rds"))
 xgb_foldC      <- readRDS(file.path(out_dir, "xgb_foldC.rds"))
+xgb_timings    <- readRDS(file.path(out_dir, "xgb_timings.rds"))
+xgb_runtime    <- readRDS(file.path(out_dir, "xgb_runtime.rds"))
+xgb_list       <- readRDS(file.path(out_dir, "xgb_list.rds"))
+xgb_oof        <- readRDS(file.path(out_dir, "xgb_oof.rds"))
 
 # TabPFN
 tabpfn_metrics   <- readRDS(file.path(out_dir, "tabpfn_metrics.rds"))
 tabpfn_shap_agg  <- readRDS(file.path(out_dir, "tabpfn_shap_agg.rds"))
 tabpfn_shap_long <- readRDS(file.path(out_dir, "tabpfn_shap_long.rds"))
 tabpfn_foldC     <- readRDS(file.path(out_dir, "tabpfn_foldC.rds"))
+# tabpfn_timings   <- readRDS(file.path(out_dir, "tabpfn_timings.rds"))
+# tabpfn_runtime   <- readRDS(file.path(out_dir, "tabpfn_runtime.rds"))
+# tabpfn_list      <- readRDS(file.path(out_dir, "tabpfn_list.rds"))
+# tabpfn_oof       <- readRDS(file.path(out_dir, "tabpfn_oof.rds"))
 
-# PERMANOVA
+# PERMANOVA (ei OOF)
 permanova_metrics    <- readRDS(file.path(out_dir, "permanova_metrics.rds"))
 permanova_foldR2     <- readRDS(file.path(out_dir, "permanova_foldR2.rds"))
 permanova_shap_agg   <- readRDS(file.path(out_dir, "permanova_shap_agg.rds"))
 permanova_shap_long  <- readRDS(file.path(out_dir, "permanova_shap_long.rds"))
+permanova_timings    <- readRDS(file.path(out_dir, "permanova_timings.rds"))
+permanova_runtime    <- readRDS(file.path(out_dir, "permanova_runtime.rds"))
+permanova_list       <- readRDS(file.path(out_dir, "permanova_list.rds"))
+
 
 # Combine overall metrics
 metrics_all <- dplyr::bind_rows(
@@ -130,13 +163,32 @@ shap_long_all <- dplyr::bind_rows(
   coxnet_shap_long, rsf_shap_long, logit_shap_long,
   cb_shap_long, deepsurv_shap_long, xgb_shap_long, tabpfn_shap_long,
   permanova_shap_long
-)
+) %>% dplyr::select(-dplyr::any_of(".row_id"))
 
 shap_agg_all <- dplyr::bind_rows(
   coxnet_shap_agg, rsf_shap_agg, logit_shap_agg,
   cb_shap_agg, deepsurv_shap_agg, xgb_shap_agg, tabpfn_shap_agg,
   permanova_shap_agg
 )
+
+# Combine timings across models
+timings_all <- dplyr::bind_rows(
+  coxnet_timings, rsf_timings, logit_timings,
+  cb_timings, deepsurv_timings, xgb_timings,
+  permanova_timings
+)
+
+# Combine runtime across models
+runtime_all <- dplyr::bind_rows(
+  rsf_runtime, logit_runtime,
+  cb_runtime, deepsurv_runtime, xgb_runtime,
+  permanova_runtime
+)
+
+# OOF
+oof_all <- dplyr::bind_rows(
+  coxnet_oof, rsf_oof, logit_oof, cb_oof, deepsurv_oof, xgb_oof
+) %>% dplyr::distinct()
 
 
 # Subsampling and truncation
@@ -155,7 +207,7 @@ permanova_grids <- readRDS(file.path(out_dir, "grid_permanova.rds"))
 # Visualizations
 
 ## Performance across transformations
-
+### Summary plot
 
 ```{r fig-perf, fig.width=10, fig.height=6, dpi=300, fig.cap="Performance plot", fig.path="figures/"}
 plot_df <- metrics_all %>%
@@ -206,7 +258,7 @@ ggplot(plot_df, aes(x = model, y = estimate, color = method)) +
 PERMANOVA is permutation-based, so its 95% CIs reflect K-fold variability rather than an asymptotic SE. In contrast, the other models report asymptotic 95% CIs (from the concordance estimator), so the intervals aren’t directly comparable.
 
 
-
+### Plot 1
 
 ```{r fig-perfbox, fig.width=10, fig.height=6, dpi=300, fig.cap="Performance boxplot", fig.path="figures/"}
 # Build folds for C-models
@@ -265,6 +317,8 @@ ggplot(folds_all, aes(x = transform, y = value)) +
 
 ```
 
+
+### Plot 2
 
 ```{r fig-pairwise, fig.width=10, fig.height=6, dpi=300, fig.cap="Pairwise C-difference", fig.path="figures/"}
 # Pairwise C-difference heatmap with significance stars (p ≤ 0.05)
@@ -357,7 +411,8 @@ ggplot(to_plot, aes(x = t2, y = t1, fill = mean_diff)) +
 
 
 
-## Shapley heatmap
+## Shapley Plots
+### Plot 3
 
 ```{r fig-shap, fig.width=10, fig.height=6, dpi=300, fig.cap="Shapley heatmap", fig.path="figures/"}
 # Settings
@@ -394,7 +449,141 @@ ggplot(coverage_tbl, aes(x = transform, y = model_key, fill = coverage)) +
 
 With a zero importance threshold, most models flag nearly all features, XGBoost prunes the most, and Logit prunes slightly under TSS.
 
+### Plot 4
 
+
+```{r fig-featuregrid, fig.width=14, fig.height=8, dpi=400, fig.cap="Significant-feature grids (no LRA)", fig.path="figures/"}
+# ---- Significant-feature grids (two plots): ALL (no LRA) and LRA-only ----
+# - x: transform
+# - y: genus (feature)
+# - tile + “x” if feature is selected under that transform
+# Selection modes:
+#   selection_mode = "topN"     -> top_k features per (model, transform)
+#   selection_mode = "quantile" -> features ≥ q_cut quantile of mean |SHAP| per (model, transform)
+#   selection_mode = "nonzero"  -> features with mean |SHAP| > eps_nonzero
+
+
+selection_mode <- "topN"   # "topN", "quantile", "nonzero"
+top_k         <- 10
+q_cut         <- 0.90
+eps_nonzero   <- 1e-9
+
+model_levels <- c("coxnet","rsf","xgb_cox","deepsurv","logit","catboost","tabpfn","permanova")
+
+# per-group selection according to selection_mode
+pick_per_group <- function(df) {
+  if (nrow(df) == 0) return(tibble(feature = character(0), selected = logical(0)))
+  if (selection_mode == "topN") {
+    df %>% dplyr::arrange(dplyr::desc(mean_abs)) %>%
+      dplyr::slice_head(n = min(top_k, nrow(df))) %>%
+      dplyr::transmute(feature, selected = TRUE)
+  } else if (selection_mode == "quantile") {
+    thr <- stats::quantile(df$mean_abs, probs = q_cut, na.rm = TRUE, names = FALSE)
+    df %>% dplyr::filter(mean_abs >= thr) %>% dplyr::transmute(feature, selected = TRUE)
+  } else if (selection_mode == "nonzero") {
+    df %>% dplyr::filter(mean_abs > eps_nonzero) %>% dplyr::transmute(feature, selected = TRUE)
+  } else {
+    stop("Unknown selection_mode: ", selection_mode)
+  }
+}
+
+# build grid
+build_grid <- function(sel_long, keep_transforms = NULL) {
+  if (!is.null(keep_transforms)) {
+    sel_long <- sel_long %>% dplyr::filter(transform %in% keep_transforms)
+  }
+  feat_order <- sel_long %>%
+    dplyr::count(feature, sort = TRUE) %>%
+    dplyr::pull(feature)
+  
+  sel_long %>%
+    dplyr::distinct(model_key, transform) %>%
+    tidyr::expand_grid(feature = unique(sel_long$feature)) %>%
+    dplyr::left_join(sel_long, by = c("model_key","transform","feature")) %>%
+    dplyr::mutate(selected = tidyr::replace_na(selected, FALSE)) %>%
+    dplyr::mutate(
+      transform = factor(transform, levels = sort(unique(transform))),
+      feature   = factor(feature,   levels = rev(feat_order))
+    )
+}
+
+# plotting
+plot_grid <- function(grid_df, title_txt, subtitle_txt) {
+  ggplot(grid_df, aes(x = transform, y = feature)) +
+    geom_tile(aes(fill = selected), color = "grey90", linewidth = 0.25) +
+    geom_text(data = dplyr::filter(grid_df, selected),
+              label = "x", size = 2.3, fontface = "bold", color = "white") +
+    scale_fill_manual(name = "Selected", values = c(`FALSE` = "white", `TRUE` = "steelblue")) +
+    facet_wrap(~ model_key, ncol = 3, scales = "free_x") +
+    labs(title = title_txt, subtitle = subtitle_txt, x = "Transform", y = "Feature") +
+    theme_bw(base_size = 10) +
+    theme(
+      axis.text.y   = element_text(size = 4, vjust = 0.6),
+      axis.text.x   = element_text(size = 8, angle = 30, hjust = 1),
+      strip.text    = element_text(size = 9),
+      legend.text   = element_text(size = 8),
+      legend.title  = element_text(size = 9),
+      panel.grid    = element_blank(),
+      panel.spacing = unit(0.6, "lines")
+    )
+}
+
+
+# A) ALL TRANSFORMS EXCEPT LRA
+feat_imp_all <- shap_long_all %>%
+  dplyr::filter(transform != "LRA") %>%
+  dplyr::group_by(model_key, transform, feature) %>%
+  dplyr::summarise(mean_abs = mean(abs(shap), na.rm = TRUE), .groups = "drop") %>%
+  dplyr::mutate(model_key = factor(model_key, levels = model_levels[model_levels %in% unique(model_key)]))
+
+sel_long_all <- feat_imp_all %>%
+  dplyr::group_by(model_key, transform) %>%
+  dplyr::group_modify(~ pick_per_group(.x)) %>%
+  dplyr::ungroup()
+
+grid_all <- build_grid(sel_long_all)
+
+sub_all <- paste0(
+  "Mode = ", selection_mode,
+  if (selection_mode == "topN")      paste0(" (top-", top_k, " per transform)"),
+  if (selection_mode == "quantile")  paste0(" (\u2265 ", 100*q_cut, "% of mean |SHAP|)"),
+  if (selection_mode == "nonzero")   " (mean |SHAP| > 0)"
+)
+
+p_sig_all <- plot_grid(grid_all, "Significant features by transform (no LRA)", sub_all)
+print(p_sig_all)
+```
+
+
+```{r fig-featuregrid2, fig.width=14, fig.height=8, dpi=400, fig.cap="Significant-feature grids (only LRA)", fig.path="figures/"}
+# B) LRA-ONLY
+feat_imp_lra <- shap_long_all %>%
+  dplyr::filter(transform == "LRA") %>%
+  dplyr::group_by(model_key, transform, feature) %>%
+  dplyr::summarise(mean_abs = mean(abs(shap), na.rm = TRUE), .groups = "drop") %>%
+  dplyr::mutate(model_key = factor(model_key, levels = model_levels[model_levels %in% unique(model_key)]))
+
+sel_long_lra <- feat_imp_lra %>%
+  dplyr::group_by(model_key, transform) %>%
+  dplyr::group_modify(~ pick_per_group(.x)) %>%
+  dplyr::ungroup()
+
+grid_lra <- build_grid(sel_long_lra, keep_transforms = "LRA")
+
+sub_lra <- paste0(
+  "Mode = ", selection_mode,
+  if (selection_mode == "topN")      paste0(" (top-", top_k, " per model)"),
+  if (selection_mode == "quantile")  paste0(" (\u2265 ", 100*q_cut, "% of mean |SHAP|)"),
+  if (selection_mode == "nonzero")   " (mean |SHAP| > 0)"
+)
+
+p_sig_lra <- plot_grid(grid_lra, "Significant features under LRA", sub_lra) +
+  labs(x = NULL)
+print(p_sig_lra)
+```
+
+
+### Plot 7
 
 ```{r fig-shapcor, fig.width=10, fig.height=6, dpi=300, fig.cap="Shapley correlation", fig.path="figures/"}
 # ---- SHAP correlation heatmap with significance stars (p ≤ 0.05) ----
@@ -492,9 +681,195 @@ ggplot(corr_all, aes(x = t2, y = t1, fill = cor)) +
 
 
 
+### Plot 8
+
+```{r fig-jaccard, fig.width=10, fig.height=6, dpi=300, fig.cap="Jaccard index", fig.path="figures/"}
+# ---- Jaccard fold-stability (same styling as truncation plot) ----
+# - x: transform
+# - y: mean Jaccard across fold-pairs
+# - panel: model
+
+# Selection rule for per-fold feature sets: either top-k or SHAP threshold (tau)
+selection_mode  <- "topk"   # "topk" or "tau"
+top_k           <- 10       # used if selection_mode == "topk"
+tau             <- 0        # used if selection_mode == "tau"
+tau_as_quantile <- FALSE    # if FALSE, tau is an absolute |SHAP| cutoff
+
+# Mean SHAP per (model, transform, fold, feature)
+feat_imp <- shap_long_all %>%
+  group_by(model_key, transform, .fold, feature) %>%
+  summarise(mean_abs = mean(abs(shap), na.rm = TRUE), .groups = "drop")
+
+# Extract fold-specific sets based on the chosen rule
+sets_tbl <- feat_imp %>%
+  group_by(model_key, transform, .fold) %>%
+  {
+    if (identical(selection_mode, "topk")) {
+      arrange(., desc(mean_abs), .by_group = TRUE) %>%
+        summarise(
+          set = list(head(feature, n = min(top_k, n()))),
+          .groups = "drop_last"
+        )
+    } else {
+      summarise(.,
+        set = {
+          thr <- if (isTRUE(tau_as_quantile)) quantile(mean_abs, probs = tau, na.rm = TRUE) else tau
+          sel <- feature[mean_abs >= thr]
+          if (length(sel) == 0L) sel <- feature[order(-mean_abs)][1]
+          list(sel)
+        },
+        .groups = "drop_last"
+      )
+    }
+  } %>%
+  ungroup()
+
+# For each (model, transform), compute Jaccard for all fold-pairs
+jaccard_pairs <- sets_tbl %>%
+  group_by(model_key, transform) %>%
+  summarise(
+    pairs = list({
+      df <- cur_data()
+      if (nrow(df) < 2L) {
+        tibble(.fold1 = integer(0), .fold2 = integer(0), J = numeric(0))
+      } else {
+        cmb <- utils::combn(nrow(df), 2)
+        map_dfr(seq_len(ncol(cmb)), function(j) {
+          i <- cmb[, j]
+          A <- df$set[[i[1]]]; B <- df$set[[i[2]]]
+          inter <- length(intersect(A, B))
+          uni   <- length(union(A, B))
+          tibble(
+            .fold1 = df$.fold[i[1]],
+            .fold2 = df$.fold[i[2]],
+            J = if (uni == 0) NA_real_ else inter / uni
+          )
+        })
+      }
+    }),
+    .groups = "drop"
+  ) %>%
+  unnest(pairs)
+
+# Summarise: mean Jaccard + 95% CI across fold-pairs
+jaccard_summary <- jaccard_pairs %>%
+  filter(is.finite(J)) %>%
+  group_by(model_key, transform) %>%
+  summarise(
+    n_pairs = n(),
+    mean_J  = mean(J, na.rm = TRUE),
+    sd_J    = sd(J, na.rm = TRUE),
+    se_J    = sd_J / sqrt(pmax(n_pairs, 1)),
+    tcr     = qt(0.975, df = pmax(n_pairs - 1, 1)),
+    lower   = mean_J - tcr * se_J,
+    upper   = mean_J + tcr * se_J,
+    .groups = "drop"
+  )
+
+# Order transforms by average stability
+t_order <- jaccard_summary %>%
+  group_by(transform) %>%
+  summarise(mu = mean(mean_J, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(mu)) %>% pull(transform)
+
+jaccard_summary <- jaccard_summary %>%
+  mutate(
+    transform = factor(transform, levels = t_order),
+    model_key = factor(
+      model_key,
+      levels = c("coxnet","rsf","xgb_cox","deepsurv","logit","catboost","tabpfn","permanova")[
+        c("coxnet","rsf","xgb_cox","deepsurv","logit","catboost","tabpfn","permanova") %in% model_key
+      ]
+    )
+  )
+
+# Subtitle text reflecting selection rule
+subtxt <- if (identical(selection_mode, "topk")) {
+  paste0("Top-", top_k, " per fold selected by mean |SHAP|; point = mean J, bar = 95% CI across fold-pairs")
+} else if (isTRUE(tau_as_quantile)) {
+  paste0("Per-fold features with mean |SHAP| ≥ ", round(tau, 3), " quantile; point = mean J, bar = 95% CI across fold-pairs")
+} else {
+  paste0("Per-fold features with mean |SHAP| ≥ ", signif(tau, 3), "; point = mean J, bar = 95% CI across fold-pairs")
+}
+
+# Plot
+p_jaccard <- ggplot(jaccard_summary, aes(x = transform, y = mean_J)) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2, linewidth = 0.5) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ model_key, ncol = 3) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "Fold-stability of SHAP-selected features (Jaccard)",
+    subtitle = subtxt,
+    x = "Transform", y = "Mean Jaccard across fold pairs"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+
+print(p_jaccard)
+
+```
+
+This figure shows the cross-fold stability of the top-10 SHAP-selected features for each model–transformation pair, measured by the mean Jaccard index (points) with 95% CIs (bars). Higher values indicate more stable feature sets. Overall, RSF appears the most stable, CatBoost with PA is relatively stable, whereas LRA is the least stable transformation across folds.
+
 
 ## Subsampling and truncation
+### Plot 5
 
+```{r fig-truncation, fig.width=10, fig.height=6, dpi=300, fig.cap="Truncation performance", fig.path="figures/"}
+# ---- Truncation: performance vs. follow-up time, per transform & model ----
+# - x: follow-up time (truncation threshold)
+# - y: performance estimate (C for C-models; R² for PERMANOVA)
+# - color: transformation
+# - panel: model
+
+model_keys <- c(
+  catboost  = "catboost",
+  coxnet    = "coxnet",
+  deepsurv  = "deepsurv",
+  logit     = "logit",
+  rsf       = "rsf",
+  tabpfn    = "tabpfn",
+  xgb       = "xgb",
+  permanova = "permanova"
+)
+
+model_levels <- c("CatBoost","CoxNet","DeepSurv","Logit","RSF","TabPFN","XGB_Cox","PERMANOVA")
+pick_cols_tr <- c("model","transform","estimate","followup_time")
+
+metrics_tr_all <- purrr::map_dfr(names(model_keys), function(nm) {
+  g <- get(paste0(nm, "_grids"), envir = .GlobalEnv)
+  g$tr_metrics %>%
+    select(any_of(pick_cols_tr)) %>%
+    filter(is.finite(estimate), is.finite(followup_time)) %>%
+    mutate(model = factor(model, levels = model_levels))
+})
+
+p_trunc <- metrics_tr_all %>%
+  arrange(model, transform, followup_time) %>%
+  ggplot(aes(x = followup_time, y = estimate, color = transform, group = transform)) +
+  geom_line(alpha = 0.7) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ model, ncol = 3, scales = "free_y") +
+  labs(
+    title = "Performance vs. follow-up time (truncation)",
+    x = "Follow-up time",
+    y = "C-statistic (PERMANOVA shows R²)",
+    color = "Transform"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank())
+
+print(p_trunc)
+
+```
+
+
+### Plot 6
 
 ```{r fig-subsample, fig.width=10, fig.height=6, dpi=300, fig.cap="Subsample performance", fig.path="figures/"}
 # ---- Subsampling: performance vs. sample subset (%), per transform & model ----
@@ -546,41 +921,189 @@ print(p_sub)
 
 
 
+## MISC
+### Plot 9
 
 
-```{r fig-truncation, fig.width=10, fig.height=6, dpi=300, fig.cap="Truncation performance", fig.path="figures/"}
-# ---- Truncation: performance vs. follow-up time, per transform & model ----
-# - x: follow-up time (truncation threshold)
-# - y: performance estimate (C for C-models; R² for PERMANOVA)
-# - color: transformation
-# - panel: model
+```{r fig-time, fig.width=10, fig.height=6, dpi=300, fig.cap="Timings", fig.path="figures/"}
+# ---- Computation time heatmap (minutes, linear) ----
+# - x: transform
+# - y: model
+# - fill: runtime (minutes)
 
-pick_cols_tr <- c("model","transform","estimate","followup_time")
+rt <- runtime_all %>%
+  filter(is.finite(runtime_sec)) %>%
+  mutate(
+    runtime_min = runtime_sec / 60,
+    method      = factor(method),
+    transform   = factor(transform)
+  )
 
-metrics_tr_all <- purrr::map_dfr(names(model_keys), function(nm) {
-  g <- get(paste0(nm, "_grids"), envir = .GlobalEnv)
-  g$tr_metrics %>%
-    select(any_of(pick_cols_tr)) %>%
-    filter(is.finite(estimate), is.finite(followup_time)) %>%
-    mutate(model = factor(model, levels = model_levels))
-})
+# Order: Slowest first by median
+method_order <- rt %>%
+  group_by(method) %>% summarise(mu = median(runtime_min, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(mu)) %>% pull(method)
 
-p_trunc <- metrics_tr_all %>%
-  arrange(model, transform, followup_time) %>%
-  ggplot(aes(x = followup_time, y = estimate, color = transform, group = transform)) +
-  geom_line(alpha = 0.7) +
-  geom_point(size = 1.8) +
-  facet_wrap(~ model, ncol = 3, scales = "free_y") +
+transform_order <- rt %>%
+  group_by(transform) %>% summarise(mu = median(runtime_min, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(mu)) %>% pull(transform)
+
+rt <- rt %>%
+  mutate(
+    method    = factor(method, levels = method_order),
+    transform = factor(transform, levels = transform_order)
+  )
+
+# Plot
+p_time <- ggplot(rt, aes(x = transform, y = method, fill = runtime_min)) +
+  geom_tile(color = "white", linewidth = 0.25) +
+  scale_fill_viridis_c(name = "Minutes",
+                       labels = label_number(accuracy = 0.1)) +
   labs(
-    title = "Performance vs. follow-up time (truncation)",
-    x = "Follow-up time",
-    y = "C-statistic (PERMANOVA shows R²)",
-    color = "Transform"
+    title = "Computation time by model and transform",
+    x = "Transform", y = "Model"
   ) +
   theme_bw() +
-  theme(legend.position = "bottom", panel.grid.minor = element_blank())
+  theme(
+    legend.position = "right",
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
 
-print(p_trunc)
+print(p_time)
+```
+
+
+
+```{r}
+# ---- Computation time heatmap (minutes) ----
+# - x: transform, y: model
+# - fill: runtime (minutes)
+
+rt <- runtime_all %>%
+  filter(is.finite(runtime_sec)) %>%
+  mutate(
+    runtime_min = runtime_sec / 60,
+    method    = factor(method),
+    transform = factor(transform)
+  )
+
+# Order factors by median runtime
+method_order <- rt %>%
+  group_by(method) %>%
+  summarise(mu = median(runtime_min, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(mu)) %>% pull(method)
+
+transform_order <- rt %>%
+  group_by(transform) %>%
+  summarise(mu = median(runtime_min, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(mu)) %>% pull(transform)
+
+rt <- rt %>%
+  mutate(
+    method    = factor(method, levels = method_order),
+    transform = factor(transform, levels = transform_order)
+  )
+
+p_time <- ggplot(rt, aes(x = transform, y = method, fill = runtime_min)) +
+  geom_tile(color = "white", linewidth = 0.25) +
+  scale_fill_gradient(
+    name = "Minutes",
+    low = "white", high = "red",
+    labels = label_number(accuracy = 0.1)
+  ) +
+  labs(
+    title = "Computation time by model and transform",
+    x = "Transform", y = "Model"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "right",
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+
+print(p_time)
+
+```
+
+
+### Plot 10
+
+```{r fig-km, fig.width=14, fig.height=8, dpi=360, fig.cap="Kaplan-Meier", fig.path="figures/"}
+# ---- Kaplan–Meier (OOF), median split ----
+# - Split risk_score Low/High per (method, transform)
+# - x: time, y: survival; color/fill: Risk group
+# - Facets: transform (rows) × model (cols)
+# - Ribbon: 95% CI; Text: log-rank p-value
+
+# Make two risk groups per (method, transform): Low vs High by median
+oof_km <- oof_all %>%
+  filter(is.finite(risk_score)) %>%
+  group_by(method, transform) %>%
+  mutate(
+    risk_group = if_else(
+      risk_score >= median(risk_score, na.rm = TRUE), "High", "Low"
+    ),
+    risk_group = factor(risk_group, levels = c("Low", "High"))
+  ) %>%
+  ungroup()
+
+# Build a tidy KM summary table
+km_df <- oof_km %>%
+  group_by(method, transform) %>%
+  group_split() %>%
+  purrr::map_dfr(function(d){
+    fit <- survfit(Surv(Event_time, Event) ~ risk_group, data = d)
+    survminer::surv_summary(fit, data = d) %>%
+      mutate(
+        method    = d$method[1],
+        transform = d$transform[1],
+        risk_group = sub("^risk_group=", "", strata)
+      ) %>%
+      select(method, transform, time, surv, lower, upper, risk_group)
+  })
+
+# Compute log-rank p-value per (method, transform)
+p_tbl <- oof_km %>%
+  group_by(method, transform) %>%
+  group_modify(~{
+    sdiff <- survdiff(Surv(Event_time, Event) ~ risk_group, data = .x)
+    tibble(pval = pchisq(sdiff$chisq, df = length(sdiff$n) - 1, lower.tail = FALSE))
+  }) %>%
+  ungroup()
+
+p_anno <- km_df %>%
+  dplyr::group_by(method, transform) %>%
+  dplyr::summarise(tmax = max(time, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::left_join(p_tbl, by = c("method", "transform")) %>%
+  dplyr::mutate(
+    x = 0.98 * tmax,
+    y = 0.08,
+    label = paste0("Log-rank p = ", formatC(pval, format = "e", digits = 2))
+  )
+
+# Plot
+ggplot(km_df, aes(x = time, y = surv, color = risk_group, fill = risk_group)) +
+  geom_step(linewidth = 0.9) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.12, color = NA) +
+  facet_grid(transform ~ method, scales = "free_y") +
+  geom_text(
+    data = p_anno,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE, hjust = 1, vjust = 0, size = 3.2
+  ) +
+  labs(
+    title = "Kaplan–Meier by median risk (OOF) • panels: transform × model",
+    x = "Time", y = "Survival probability",
+    color = "Risk group", fill = "Risk group"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.spacing.x = unit(0.8, "lines"),
+    legend.position = "bottom"
+  )
 
 ```
 

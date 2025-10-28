@@ -188,6 +188,16 @@ summarize_cv <- function(model_name, method_name, cv_res, level = 0.95,
   out
 }
 
+# OOF risks
+make_oof <- function(df, preds, fold_id, event_col = "Event", time_col = "Event_time") {
+  tibble::tibble(
+    risk_score = as.numeric(preds),
+    Event      = as.integer(df[[event_col]]),
+    Event_time = as.numeric(df[[time_col]]),
+    .fold      = as.integer(fold_id)
+  )
+}
+
 
 # Logistic regression (binomial) K-fold CV + SHAP
 logit_cindex_cv5 <- function(
@@ -209,6 +219,17 @@ logit_cindex_cv5 <- function(
   feat_cols <- setdiff(names(df), c(event_col, time_col))
   shap_all <- if (isTRUE(shap)) list() else NULL
   
+  # timing
+  t_all_start <- Sys.time()
+  timings <- list()
+  add_timing <- function(k, fit_t0, fit_t1, shap_t0 = NA, shap_t1 = NA) {
+    fit_sec  <- as.numeric(difftime(fit_t1,  fit_t0,  units = "secs"))
+    shap_sec <- if (is.na(shap_t0) || is.na(shap_t1)) NA_real_
+    else as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+    tibble::tibble(fold = k, fit_sec = fit_sec, shap_sec = shap_sec,
+                   total_sec = fit_sec + ifelse(is.na(shap_sec), 0, shap_sec))
+  }
+  
   fit_imp <- function(d) {
     is_num <- vapply(d, is.numeric, TRUE)
     list(
@@ -221,9 +242,7 @@ logit_cindex_cv5 <- function(
   apply_imp <- function(d, imp) {
     out <- d
     for (nm in imp$num_cols) {
-      v <- out[[nm]]
-      v[!is.finite(v)] <- NA
-      v[is.na(v)] <- imp$num_med[[nm]]
+      v <- out[[nm]]; v[!is.finite(v)] <- NA; v[is.na(v)] <- imp$num_med[[nm]]
       out[[nm]] <- v
     }
     for (nm in imp$cat_cols) {
@@ -254,15 +273,20 @@ logit_cindex_cv5 <- function(
     }
     train0 <- cast_cols(train0); test0 <- cast_cols(test0)
     
-    # keep only complete cases on features
+    # keep all rows
     cc_tr <- rep(TRUE, nrow(train0))
     cc_te <- rep(TRUE, nrow(test0))
     train <- train0
     test  <- test0
+    if (nrow(train) < 2L) {
+      timings[[k]] <- tibble::tibble(fold = k, fit_sec = NA_real_, shap_sec = NA_real_, total_sec = NA_real_)
+      next
+    }
     
-    if (nrow(train) < 2L) next
+    # timing: fit start
+    fit_t0 <- Sys.time()
     
-    # align dummies using only complete rows
+    # dummies + align
     xtr_raw <- train[, feat_cols, drop = FALSE]
     xte_raw <- test[,  feat_cols, drop = FALSE]
     imp <- fit_imp(xtr_raw)
@@ -272,21 +296,13 @@ logit_cindex_cv5 <- function(
     Xtr <- MM$Xtr
     Xte <- MM$Xte
     
-    # drop zero-variance cols by train
-    keep0 <- if (requireNamespace("matrixStats", quietly = TRUE)) {
-      matrixStats::colSds(Xtr) > 0
-    } else {
-      apply(Xtr, 2, sd) > 0
-    }
-    if (!all(keep0)) {
-      Xtr <- Xtr[, keep0, drop = FALSE]
-      Xte <- Xte[, keep0, drop = FALSE]
-    }
+    # drop zero-variance
+    keep0 <- if (requireNamespace("matrixStats", quietly = TRUE)) matrixStats::colSds(Xtr) > 0 else apply(Xtr, 2, sd) > 0
+    if (!all(keep0)) { Xtr <- Xtr[, keep0, drop = FALSE]; Xte <- Xte[, keep0, drop = FALSE] }
     
-    # drop collinear columns via QR on TRAIN
+    # drop collinear
     if (ncol(Xtr) > 0) {
-      qrX <- qr(Xtr)
-      rk  <- qrX$rank
+      qrX <- qr(Xtr); rk <- qrX$rank
       if (rk < ncol(Xtr)) {
         keep_qr <- qrX$pivot[seq_len(rk)]
         Xtr <- Xtr[, keep_qr, drop = FALSE]
@@ -299,18 +315,22 @@ logit_cindex_cv5 <- function(
     df_fit <- data.frame(y = ytr, Xtr, check.names = FALSE)
     fit <- suppressWarnings(stats::glm(
       y ~ .,
-      data    = df_fit,
-      family  = stats::binomial(),
+      data = df_fit,
+      family = stats::binomial(),
       control = stats::glm.control(maxit = maxit)
     ))
     
-    # OOF risk (probability)
+    # OOF prob
     pr_te <- suppressWarnings(stats::predict(fit, newdata = as.data.frame(Xte), type = "response"))
     pr_te[!is.finite(pr_te)] <- NA_real_
     preds[te][cc_te] <- as.numeric(pr_te)
     
+    # timing: fit end
+    fit_t1 <- Sys.time()
+    
     # SHAP
     if (isTRUE(shap) && nrow(Xtr) > 0) {
+      shap_t0 <- Sys.time()
       ttX  <- stats::delete.response(stats::terms(fit))
       beta <- stats::coef(fit)
       cols <- setdiff(names(beta), "(Intercept)")
@@ -322,12 +342,9 @@ logit_cindex_cv5 <- function(
         pred_wrap <- function(object, newdata) {
           X <- stats::model.matrix(ttX, data = newdata)
           miss <- setdiff(cols, colnames(X))
-          if (length(miss)) {
-            X <- cbind(X, matrix(0, nrow(X), length(miss), dimnames = list(NULL, miss)))
-          }
+          if (length(miss)) X <- cbind(X, matrix(0, nrow(X), length(miss), dimnames = list(NULL, miss)))
           X <- X[, cols, drop = FALSE]
-          b <- stats::coef(object)[cols]
-          b[!is.finite(b)] <- 0
+          b <- stats::coef(object)[cols]; b[!is.finite(b)] <- 0
           eta <- drop(X %*% b); eta[!is.finite(eta)] <- 0
           as.numeric(eta)
         }
@@ -349,18 +366,21 @@ logit_cindex_cv5 <- function(
         } else stop("Unexpected SHAP object type: ", paste(class(shap_raw), collapse = "/"))
         
         shap_mat[!is.finite(shap_mat)] <- 0
-        
         shap_tbl <- tibble::as_tibble(shap_mat, .name_repair = "minimal")
         idx_rows <- which(te)[cc_te]
         shap_tbl$.row_id <- idx_rows
-        shap_tbl <- tidyr::pivot_longer(
-          shap_tbl, cols = - .row_id,
-          names_to = "feature", values_to = "shap"
-        )
+        shap_tbl <- tidyr::pivot_longer(shap_tbl, cols = - .row_id,
+                                        names_to = "feature", values_to = "shap")
+        shap_tbl$.fold <- k
         shap_all[[k]] <- shap_tbl
       } else {
-        shap_all[[k]] <- tibble::tibble(.row_id = integer(0), feature = character(0), shap = numeric(0))
+        shap_all[[k]] <- tibble::tibble(.row_id = integer(0), feature = character(0),
+                                        shap = numeric(0), .fold = integer(0))
       }
+      shap_t1 <- Sys.time()
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1, shap_t0, shap_t1)
+    } else {
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1)
     }
   }
   
@@ -368,9 +388,9 @@ logit_cindex_cv5 <- function(
   c_folds <- vapply(
     seq_len(K),
     function(k) {
-      idx <- (fold_id == k) & is.finite(preds)
-      if (!any(idx)) return(NA_real_)
-      harrell_c(df[[time_col]][idx], df[[event_col]][idx], preds[idx], reverse = TRUE)
+      ii <- (fold_id == k) & is.finite(preds)
+      if (!any(ii)) return(NA_real_)
+      harrell_c(df[[time_col]][ii], df[[event_col]][ii], preds[ii], reverse = TRUE)
     },
     numeric(1)
   )
@@ -410,8 +430,14 @@ logit_cindex_cv5 <- function(
     attr(res, "shap_agg")  <- shap_agg
   }
   
+  # timing: attach
+  attr(res, "timings") <- timings |> purrr::compact() |> dplyr::bind_rows()
+  attr(res, "runtime_sec") <- as.numeric(difftime(Sys.time(), t_all_start, units = "secs"))
+  
+  attr(res, "oof") <- make_oof(df, preds, fold_id, event_col, time_col)
   return(res)
 }
+
 
 
 # Random Survival Forest K-fold CV + SHAP
@@ -423,6 +449,8 @@ rsf_cindex_cv5 <- function(
     shap = FALSE, shap_nsim = 64, shap_bg_max = 128, shap_verbose = TRUE
 ) {
   set.seed(seed)
+  
+  # folds
   n <- nrow(df)
   if (!is.null(fold_id) && length(fold_id) != n)
     stop("'fold_id' length must equal nrow(df)")
@@ -435,8 +463,21 @@ rsf_cindex_cv5 <- function(
   feat_cols <- setdiff(names(df), c(event_col, time_col))
   shap_all <- if (isTRUE(shap)) list() else NULL
   
+  # timing
+  t_all_start <- Sys.time()
+  timings <- list()
+  add_timing <- function(k, fit_t0, fit_t1, shap_t0 = NA, shap_t1 = NA) {
+    fit_sec  <- as.numeric(difftime(fit_t1,  fit_t0,  units = "secs"))
+    shap_sec <- if (is.na(shap_t0) || is.na(shap_t1)) NA_real_
+    else as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+    tibble::tibble(fold = k, fit_sec = fit_sec, shap_sec = shap_sec,
+                   total_sec = fit_sec + ifelse(is.na(shap_sec), 0, shap_sec))
+  }
+  
+  # simple casting
   cast_cols <- function(d) { d[] <- lapply(d, function(x) if (is.character(x)) factor(x) else x); d }
   
+  # imputation helpers
   fit_imp <- function(d) {
     is_num <- vapply(d, is.numeric, TRUE)
     list(
@@ -460,34 +501,44 @@ rsf_cindex_cv5 <- function(
   }
   
   for (k in seq_len(K)) {
-    if (shap_verbose) message(sprintf("[RSF][%s] fold %d/%d: fit + predict%s",
-                                      method_name, k, K, if (shap) " + SHAP" else ""))
+    if (shap_verbose) message(sprintf("[RSF][%s] fold %d/%d", method_name, k, K))
     
     tr <- fold_id != k; te <- fold_id == k
     train <- df[tr, , drop = FALSE]
     test  <- df[te, , drop = FALSE]
     
-    # Factors for ranger
+    # factors for ranger
     train <- cast_cols(train)
     test  <- cast_cols(test)
     
-    # Choose mtry
+    # choose mtry
     p_train  <- max(1L, ncol(train) - 2L)
     mtry_use <- if (is.null(mtry)) max(1L, min(p_train, floor(sqrt(p_train)))) else as.integer(mtry)
     
-    # fit RSF
+    # formula
     fml <- stats::as.formula(sprintf("survival::Surv(%s, %s) ~ .", time_col, event_col))
     
+    # keep all rows
     cc_tr <- rep(TRUE, nrow(train))
     cc_te <- rep(TRUE, nrow(test))
+    
+    # timing: fit start
+    fit_t0 <- Sys.time()
+    
+    # impute features
     train_cc <- train
     test_cc  <- test
-    xtr_imp <- apply_imp(train_cc[, feat_cols, drop = FALSE], fit_imp(train_cc[, feat_cols, drop = FALSE]))
-    xte_imp <- apply_imp(test_cc[,  feat_cols, drop = FALSE], fit_imp(train_cc[, feat_cols, drop = FALSE]))
+    imp_tr   <- fit_imp(train_cc[, feat_cols, drop = FALSE])
+    xtr_imp  <- apply_imp(train_cc[, feat_cols, drop = FALSE], imp_tr)
+    xte_imp  <- apply_imp(test_cc[,  feat_cols, drop = FALSE], imp_tr)
     train_cc[, feat_cols] <- xtr_imp
     test_cc[,  feat_cols] <- xte_imp
-    if (nrow(train_cc) < 2L || nrow(test_cc) == 0L) next
+    if (nrow(train_cc) < 2L || nrow(test_cc) == 0L) {
+      timings[[k]] <- tibble::tibble(fold = k, fit_sec = NA_real_, shap_sec = NA_real_, total_sec = NA_real_)
+      next
+    }
     
+    # fit RSF
     fit <- ranger::ranger(
       formula = fml,
       data = train_cc,
@@ -503,13 +554,18 @@ rsf_cindex_cv5 <- function(
     chf <- predict(fit, data = test_cc)$chf
     preds[te][cc_te] <- if (is.matrix(chf)) chf[, ncol(chf), drop = TRUE] else as.numeric(chf)
     
+    # timing: fit end
+    fit_t1 <- Sys.time()
+    
     # SHAP
     if (isTRUE(shap)) {
-      # Background from TRAIN
+      shap_t0 <- Sys.time()
+      
+      # background from train
       bg <- train_cc[, feat_cols, drop = FALSE]
       if (nrow(bg) > shap_bg_max) bg <- bg[sample.int(nrow(bg), shap_bg_max), , drop = FALSE]
       
-      # Prediction wrapper
+      # prediction wrapper (log-CH at last time)
       pred_wrap <- function(object, newdata) {
         newdata[] <- lapply(newdata, function(z) if (is.character(z)) factor(z) else z)
         chf <- predict(object, data = newdata)$chf
@@ -529,9 +585,7 @@ rsf_cindex_cv5 <- function(
       
       shap_mat <- if (is.matrix(shap_raw) || inherits(shap_raw, "explain")) {
         dm  <- dim(shap_raw); dmn <- dimnames(shap_raw)
-        shap_mat <- unclass(shap_raw)
-        dim(shap_mat) <- dm; dimnames(shap_mat) <- dmn
-        shap_mat
+        out <- unclass(shap_raw); dim(out) <- dm; dimnames(out) <- dmn; out
       } else if (is.data.frame(shap_raw)) {
         as.matrix(shap_raw)
       } else {
@@ -542,7 +596,13 @@ rsf_cindex_cv5 <- function(
         dplyr::mutate(.row_id = which(te)[cc_te]) %>%
         tidyr::pivot_longer(-.row_id, names_to = "feature", values_to = "shap")
       
+      shap_tbl$.fold <- k
       shap_all[[k]] <- shap_tbl
+      
+      shap_t1 <- Sys.time()
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1, shap_t0, shap_t1)
+    } else {
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1)
     }
   }
   
@@ -552,12 +612,7 @@ rsf_cindex_cv5 <- function(
     function(k) {
       idx <- (fold_id == k) & is.finite(preds)
       if (!any(idx)) return(NA_real_)
-      harrell_c(
-        df[[time_col]][idx],
-        df[[event_col]][idx],
-        preds[idx],
-        reverse = TRUE
-      )
+      harrell_c(df[[time_col]][idx], df[[event_col]][idx], preds[idx], reverse = TRUE)
     },
     numeric(1)
   )
@@ -565,6 +620,7 @@ rsf_cindex_cv5 <- function(
   # CV metric
   idx_all <- is.finite(preds)
   c_overall <- if (any(idx_all)) harrell_c(df[[time_col]][idx_all], df[[event_col]][idx_all], preds[idx_all], reverse = TRUE) else NA_real_
+  
   res <- summarize_cv(
     model_name = method_name,
     method_name = "RSF",
@@ -576,12 +632,9 @@ rsf_cindex_cv5 <- function(
   )
   message(sprintf("[RSF] %s: done. CV%d C = %.3f", method_name, K, c_overall))
   
-  # Attach SHAP
+  # attach SHAP
   if (isTRUE(shap)) {
-    shap_all <- lapply(shap_all, function(x) {
-      tibble::as_tibble(x)
-    })
-    
+    shap_all <- lapply(shap_all, tibble::as_tibble)
     shap_long <- dplyr::bind_rows(shap_all) %>%
       dplyr::mutate(model_key = "rsf", transform = method_name)
     
@@ -600,8 +653,14 @@ rsf_cindex_cv5 <- function(
     attr(res, "shap_agg")  <- shap_agg
   }
   
+  # timing: attach
+  attr(res, "timings") <- timings |> purrr::compact() |> dplyr::bind_rows()
+  attr(res, "runtime_sec") <- as.numeric(difftime(Sys.time(), t_all_start, units = "secs"))
+  
+  attr(res, "oof") <- make_oof(df, preds, fold_id, event_col, time_col)
   return(res)
 }
+
 
 # DeepSurv K-fold CV + SHAP
 deepsurv_cindex_cv5 <- function(
@@ -613,7 +672,6 @@ deepsurv_cindex_cv5 <- function(
     event_col = "Event", time_col = "Event_time",
     shap = FALSE, shap_nsim = 64, shap_bg_max = 128, shap_verbose = TRUE
 ) {
-  
   set.seed(seed)
   n <- nrow(df)
   if (!is.null(fold_id) && length(fold_id) != n) stop("'fold_id' length must equal nrow(df)")
@@ -625,8 +683,18 @@ deepsurv_cindex_cv5 <- function(
   feat_cols <- setdiff(names(df), c(event_col, time_col))
   shap_all <- if (isTRUE(shap)) list() else NULL
   
-  cast_cols <- function(d) { d[] <- lapply(d, function(z) if (is.character(z) || is.logical(z)) factor(z) else z); d }
+  # timing
+  t_all_start <- Sys.time()
+  timings <- list()
+  add_timing <- function(k, fit_t0, fit_t1, shap_t0 = NA, shap_t1 = NA) {
+    fit_sec  <- as.numeric(difftime(fit_t1, fit_t0, units = "secs"))
+    shap_sec <- if (is.na(shap_t0) || is.na(shap_t1)) NA_real_
+    else as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+    tibble::tibble(fold = k, fit_sec = fit_sec, shap_sec = shap_sec,
+                   total_sec = fit_sec + ifelse(is.na(shap_sec), 0, shap_sec))
+  }
   
+  cast_cols <- function(d) { d[] <- lapply(d, function(z) if (is.character(z) || is.logical(z)) factor(z) else z); d }
   fit_imp <- function(d) {
     is_num <- vapply(d, is.numeric, TRUE)
     list(
@@ -638,18 +706,12 @@ deepsurv_cindex_cv5 <- function(
   }
   apply_imp <- function(d, imp) {
     out <- d
-    for (nm in imp$num_cols) {
-      v <- out[[nm]]; v[!is.finite(v)] <- NA; v[is.na(v)] <- imp$num_med[[nm]]; out[[nm]] <- v
-    }
-    for (nm in imp$cat_cols) {
-      out[[nm]] <- addNA(as.factor(out[[nm]]), ifany = TRUE)
-      out[[nm]] <- factor(out[[nm]], levels = imp$cat_lvls[[nm]])
-    }
+    for (nm in imp$num_cols) { v <- out[[nm]]; v[!is.finite(v)] <- NA; v[is.na(v)] <- imp$num_med[[nm]]; out[[nm]] <- v }
+    for (nm in imp$cat_cols) { out[[nm]] <- addNA(as.factor(out[[nm]]), ifany = TRUE); out[[nm]] <- factor(out[[nm]], levels = imp$cat_lvls[[nm]]) }
     out
   }
   mm_train_test <- function(xtr, xte) {
-    Xtr <- stats::model.matrix(~ . - 1, data = xtr)
-    fn  <- colnames(Xtr)
+    Xtr <- stats::model.matrix(~ . - 1, data = xtr); fn <- colnames(Xtr)
     Xte <- stats::model.matrix(~ . - 1, data = xte)
     miss <- setdiff(fn, colnames(Xte))
     if (length(miss)) Xte <- cbind(Xte, matrix(0, nrow(Xte), length(miss), dimnames = list(NULL, miss)))
@@ -658,22 +720,25 @@ deepsurv_cindex_cv5 <- function(
   }
   
   for (k in seq_len(K)) {
-    if (shap_verbose) message(sprintf("[DeepSurv][%s] fold %d/%d: fit + predict%s",
-                                      method_name, k, K, if (shap) " + SHAP" else ""))
+    if (shap_verbose) message(sprintf("[DeepSurv][%s] fold %d/%d%s", method_name, k, K, if (shap) " + SHAP" else ""))
     
     tr <- fold_id != k; te <- fold_id == k
-    train0 <- df[tr, , drop = FALSE]
-    test0  <- df[te, , drop = FALSE]
+    train0 <- cast_cols(df[tr, , drop = FALSE])
+    test0  <- cast_cols(df[te, , drop = FALSE])
     
-    train0 <- cast_cols(train0)
-    test0  <- cast_cols(test0)
-    
+    # keep all rows
     cc_tr <- rep(TRUE, nrow(train0))
     cc_te <- rep(TRUE, nrow(test0))
-    train <- train0
-    test  <- test0
-    if (nrow(train) < 2L || nrow(test) == 0L) next
+    train <- train0; test <- test0
+    if (nrow(train) < 2L || nrow(test) == 0L) {
+      timings[[k]] <- tibble::tibble(fold = k, fit_sec = NA_real_, shap_sec = NA_real_, total_sec = NA_real_)
+      next
+    }
     
+    # timing: fit start
+    fit_t0 <- Sys.time()
+    
+    # imputing + one-hot align
     xtr_raw <- train[, feat_cols, drop = FALSE]
     xte_raw <- test[,  feat_cols, drop = FALSE]
     imp <- fit_imp(xtr_raw)
@@ -684,15 +749,18 @@ deepsurv_cindex_cv5 <- function(
     Xte     <- MM$Xte
     p       <- ncol(Xtr)
     
+    # standardize
     mu <- matrixStats::colMeans2(Xtr)
     sd <- matrixStats::colSds(Xtr); sd[!is.finite(sd) | sd < 1e-8] <- 1
     Xtr_s <- sweep(sweep(Xtr, 2, mu, "-"), 2, sd, "/")
     Xte_s <- sweep(sweep(Xte, 2, mu, "-"), 2, sd, "/")
     
+    # order by time (required by Cox loss batching)
     ord       <- order(train[[time_col]])
     Xtr_s_ord <- Xtr_s[ord, , drop = FALSE]
     ev_tr     <- as.numeric(train[[event_col]][ord])
     
+    # build + fit model
     cox_ph_loss_safe <- function(y_true, y_pred) {
       tf <- tensorflow::tf
       y_pred <- tf$reshape(y_pred, shape = c(-1L))
@@ -717,8 +785,7 @@ deepsurv_cindex_cv5 <- function(
     model <- keras::keras_model(inp, out)
     model %>% keras::compile(
       optimizer = keras::optimizer_adam(learning_rate = lr, clipnorm = 1.0, clipvalue = 0.5),
-      loss = cox_ph_loss_safe,
-      run_eagerly = run_eagerly
+      loss = cox_ph_loss_safe, run_eagerly = run_eagerly
     )
     model %>% keras::fit(
       x = Xtr_s_ord, y = matrix(ev_tr, ncol = 1),
@@ -728,22 +795,22 @@ deepsurv_cindex_cv5 <- function(
         monitor = "loss", patience = patience, restore_best_weights = TRUE))
     )
     
+    # OOF risk
     preds[te][cc_te] <- as.numeric(model$predict(Xte_s, verbose = as.integer(verbose)))
+    
+    # timing: fit end
+    fit_t1 <- Sys.time()
     
     # SHAP
     if (isTRUE(shap)) {
+      shap_t0 <- Sys.time()
       bg_raw <- train[, feat_cols, drop = FALSE]
-      if (nrow(bg_raw) > shap_bg_max) {
-        bg_raw <- bg_raw[sample.int(nrow(bg_raw), shap_bg_max), , drop = FALSE]
-      }
-      
+      if (nrow(bg_raw) > shap_bg_max) bg_raw <- bg_raw[sample.int(nrow(bg_raw), shap_bg_max), , drop = FALSE]
       feat_names <- colnames(Xtr)
       pred_wrap <- function(object, newdata) {
         X <- stats::model.matrix(~ . - 1, data = newdata)
         miss <- setdiff(feat_names, colnames(X))
-        if (length(miss)) {
-          X <- cbind(X, matrix(0, nrow(X), length(miss), dimnames = list(NULL, miss)))
-        }
+        if (length(miss)) X <- cbind(X, matrix(0, nrow(X), length(miss), dimnames = list(NULL, miss)))
         X <- X[, feat_names, drop = FALSE]
         Xs <- sweep(sweep(X, 2, mu, "-"), 2, sd, "/")
         as.numeric(object$predict(Xs, verbose = 0))
@@ -755,10 +822,7 @@ deepsurv_cindex_cv5 <- function(
         X = {
           Xbg <- stats::model.matrix(~ . - 1, data = bg_raw)
           miss <- setdiff(feat_names, colnames(Xbg))
-          if (length(miss)) {
-            Xbg <- cbind(Xbg, matrix(0, nrow(Xbg), length(miss),
-                                     dimnames = list(NULL, miss)))
-          }
+          if (length(miss)) Xbg <- cbind(Xbg, matrix(0, nrow(Xbg), length(miss), dimnames = list(NULL, miss)))
           Xbg <- Xbg[, feat_names, drop = FALSE]
           bg_raw
         },
@@ -769,17 +833,21 @@ deepsurv_cindex_cv5 <- function(
       )
       
       shap_mat <- if (is.matrix(shap_raw) || inherits(shap_raw, "explain")) {
-        dm  <- dim(shap_raw); dmn <- dimnames(shap_raw)
+        dm <- dim(shap_raw); dmn <- dimnames(shap_raw)
         out <- unclass(shap_raw); dim(out) <- dm; dimnames(out) <- dmn; out
-      } else if (is.data.frame(shap_raw)) {
-        as.matrix(shap_raw)
-      } else stop("Unexpected SHAP object type: ", paste(class(shap_raw), collapse = "/"))
+      } else if (is.data.frame(shap_raw)) { as.matrix(shap_raw) }
+      else stop("Unexpected SHAP object type: ", paste(class(shap_raw), collapse = "/"))
       
       shap_tbl <- tibble::as_tibble(shap_mat, .name_repair = "minimal") %>%
         dplyr::mutate(.row_id = which(te)[cc_te]) %>%
         tidyr::pivot_longer(-.row_id, names_to = "feature", values_to = "shap")
       
+      shap_tbl$.fold <- k
       shap_all[[k]] <- shap_tbl
+      shap_t1 <- Sys.time()
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1, shap_t0, shap_t1)
+    } else {
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1)
     }
   }
   
@@ -789,14 +857,8 @@ deepsurv_cindex_cv5 <- function(
     function(k) {
       idx <- (fold_id == k) & is.finite(preds)
       if (!any(idx)) return(NA_real_)
-      harrell_c(
-        df[[time_col]][idx],
-        df[[event_col]][idx],
-        preds[idx],
-        reverse = TRUE
-      )
-    },
-    numeric(1)
+      harrell_c(df[[time_col]][idx], df[[event_col]][idx], preds[idx], reverse = TRUE)
+    }, numeric(1)
   )
   
   # CV metric
@@ -805,35 +867,31 @@ deepsurv_cindex_cv5 <- function(
   res <- summarize_cv(
     model_name = method_name,
     method_name = "DeepSurv",
-    cv_res = list(
-      data = df, preds = preds, reverse = TRUE,
-      K = K, fold_id = fold_id, c_folds = c_folds
-    ),
+    cv_res = list(data = df, preds = preds, reverse = TRUE, K = K, fold_id = fold_id, c_folds = c_folds),
     event_col = event_col, time_col = time_col
   )
   message(sprintf("[DeepSurv] %s: done. CV%d C = %.3f", method_name, K, c_overall))
   
-  # Attach SHAP
+  # attach SHAP
   if (isTRUE(shap)) {
     shap_all <- lapply(shap_all, tibble::as_tibble)
-    shap_long <- dplyr::bind_rows(shap_all) %>%
-      dplyr::mutate(model_key = "deepsurv", transform = method_name)
-    
+    shap_long <- dplyr::bind_rows(shap_all) %>% dplyr::mutate(model_key = "deepsurv", transform = method_name)
     shap_agg <- shap_long %>%
       dplyr::group_by(model_key, transform, feature) %>%
-      dplyr::summarise(
-        mean_abs    = mean(abs(shap), na.rm = TRUE),
-        mean_signed = mean(shap,      na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
+      dplyr::summarise(mean_abs = mean(abs(shap), na.rm = TRUE),
+                       mean_signed = mean(shap, na.rm = TRUE), .groups = "drop") %>%
       dplyr::group_by(model_key, transform) %>%
       dplyr::mutate(rel_abs = mean_abs / pmax(sum(mean_abs), .Machine$double.eps)) %>%
       dplyr::ungroup()
-    
     attr(res, "shap_long") <- shap_long
     attr(res, "shap_agg")  <- shap_agg
   }
   
+  # attach timing
+  attr(res, "timings") <- timings |> purrr::compact() |> dplyr::bind_rows()
+  attr(res, "runtime_sec") <- as.numeric(difftime(Sys.time(), t_all_start, units = "secs"))
+  
+  attr(res, "oof") <- make_oof(df, preds, fold_id, event_col, time_col)
   return(res)
 }
 
@@ -859,6 +917,17 @@ coxnet_cindex_cv5 <- function(
   preds <- rep(NA_real_, n)
   shap_all <- if (isTRUE(shap)) list() else NULL
   
+  # timing
+  t_all_start <- Sys.time()
+  timings <- list()
+  add_timing <- function(k, fit_t0, fit_t1, shap_t0 = NA, shap_t1 = NA) {
+    fit_sec  <- as.numeric(difftime(fit_t1, fit_t0, units = "secs"))
+    shap_sec <- if (is.na(shap_t0) || is.na(shap_t1)) NA_real_
+    else as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+    tibble::tibble(fold = k, fit_sec = fit_sec, shap_sec = shap_sec,
+                   total_sec = fit_sec + ifelse(is.na(shap_sec), 0, shap_sec))
+  }
+  
   fit_imp <- function(d) {
     is_num <- vapply(d, is.numeric, TRUE)
     list(
@@ -870,18 +939,12 @@ coxnet_cindex_cv5 <- function(
   }
   apply_imp <- function(d, imp) {
     out <- d
-    for (nm in imp$num_cols) {
-      v <- out[[nm]]; v[!is.finite(v)] <- NA; v[is.na(v)] <- imp$num_med[[nm]]; out[[nm]] <- v
-    }
-    for (nm in imp$cat_cols) {
-      out[[nm]] <- addNA(as.factor(out[[nm]]), ifany = TRUE)
-      out[[nm]] <- factor(out[[nm]], levels = imp$cat_lvls[[nm]])
-    }
+    for (nm in imp$num_cols) { v <- out[[nm]]; v[!is.finite(v)] <- NA; v[is.na(v)] <- imp$num_med[[nm]]; out[[nm]] <- v }
+    for (nm in imp$cat_cols) { out[[nm]] <- addNA(as.factor(out[[nm]]), ifany = TRUE); out[[nm]] <- factor(out[[nm]], levels = imp$cat_lvls[[nm]]) }
     out
   }
   mm_train_test <- function(xtr, xte) {
-    Xtr <- stats::model.matrix(~ . - 1, data = xtr)
-    fn  <- colnames(Xtr)
+    Xtr <- stats::model.matrix(~ . - 1, data = xtr); fn <- colnames(Xtr)
     Xte <- stats::model.matrix(~ . - 1, data = xte)
     miss <- setdiff(fn, colnames(Xte))
     if (length(miss)) Xte <- cbind(Xte, matrix(0, nrow(Xte), length(miss), dimnames = list(NULL, miss)))
@@ -896,12 +959,18 @@ coxnet_cindex_cv5 <- function(
     train0 <- df[tr, , drop = FALSE]
     test0  <- df[te, , drop = FALSE]
     
-    # complete cases on features
+    # keep all rows
     cc_tr <- rep(TRUE, nrow(train0))
     cc_te <- rep(TRUE, nrow(test0))
     train <- train0
     test  <- test0
-    if (nrow(train) < 2L) next
+    if (nrow(train) < 2L) {
+      timings[[k]] <- tibble::tibble(fold = k, fit_sec = NA_real_, shap_sec = NA_real_, total_sec = NA_real_)
+      next
+    }
+    
+    # timing: fit start
+    fit_t0 <- Sys.time()
     
     Xtr_raw <- train[, feat_cols, drop = FALSE]
     Xte_raw <- test[,  feat_cols, drop = FALSE]
@@ -912,61 +981,47 @@ coxnet_cindex_cv5 <- function(
     Xtr_mm  <- MM_all$Xtr
     Xte_mm  <- MM_all$Xte
     
-    # drop zero-variance cols by train
-    keep <- if (requireNamespace("matrixStats", quietly = TRUE)) {
-      matrixStats::colSds(Xtr_mm) > 0
-    } else {
-      apply(Xtr_mm, 2, sd) > 0
-    }
-    if (!all(keep)) {
-      Xtr_mm <- Xtr_mm[, keep, drop = FALSE]
-      Xte_mm <- Xte_mm[, keep, drop = FALSE]
-    }
+    # drop zero-variance
+    keep <- if (requireNamespace("matrixStats", quietly = TRUE)) matrixStats::colSds(Xtr_mm) > 0 else apply(Xtr_mm, 2, sd) > 0
+    if (!all(keep)) { Xtr_mm <- Xtr_mm[, keep, drop = FALSE]; Xte_mm <- Xte_mm[, keep, drop = FALSE] }
     feat_names <- colnames(Xtr_mm)
     
     y_surv <- survival::Surv(train[[time_col]], train[[event_col]])
     
-    # inner CV to choose lambda
+    # inner CV
     cvfit <- glmnet::cv.glmnet(
       x = Xtr_mm, y = y_surv,
-      family = "cox",
-      alpha  = alpha,
-      nfolds = 5,
-      standardize = TRUE,
-      type.measure = "deviance",
-      grouped = TRUE,
-      intercept = FALSE
+      family = "cox", alpha = alpha, nfolds = 5,
+      standardize = TRUE, type.measure = "deviance",
+      grouped = TRUE, intercept = FALSE
     )
     lam <- cvfit$lambda.min
     
-    # refit on full train at chosen lambda
+    # refit
     fit <- glmnet::glmnet(
       x = Xtr_mm, y = y_surv,
-      family = "cox",
-      alpha  = alpha,
-      lambda = lam,
-      standardize = TRUE,
-      intercept = FALSE
+      family = "cox", alpha = alpha, lambda = lam,
+      standardize = TRUE, intercept = FALSE
     )
     
-    # OOF risk (linear predictor)
+    # OOF risk
     lp_te <- as.numeric(stats::predict(fit, newx = Xte_mm, s = lam, type = "link"))
     lp_te[!is.finite(lp_te)] <- NA_real_
     preds[te][cc_te] <- lp_te
     
-    # SHAP via fastshap
+    # timing: fit end
+    fit_t1 <- Sys.time()
+    
+    # SHAP
     if (isTRUE(shap)) {
+      shap_t0 <- Sys.time()
       bg_raw <- Xtr_raw
-      if (nrow(bg_raw) > shap_bg_max)
-        bg_raw <- bg_raw[sample.int(nrow(bg_raw), shap_bg_max), , drop = FALSE]
+      if (nrow(bg_raw) > shap_bg_max) bg_raw <- bg_raw[sample.int(nrow(bg_raw), shap_bg_max), , drop = FALSE]
       
       pred_wrap <- function(object, newdata) {
         X <- stats::model.matrix(~ . - 1, data = newdata)
         miss <- setdiff(feat_names, colnames(X))
-        if (length(miss)) {
-          X <- cbind(X, matrix(0, nrow(X), length(miss),
-                               dimnames = list(NULL, miss)))
-        }
+        if (length(miss)) X <- cbind(X, matrix(0, nrow(X), length(miss), dimnames = list(NULL, miss)))
         X <- X[, feat_names, drop = FALSE]
         as.numeric(stats::predict(object, newx = X, s = lam, type = "link"))
       }
@@ -991,7 +1046,12 @@ coxnet_cindex_cv5 <- function(
         dplyr::mutate(.row_id = which(te)[cc_te]) |>
         tidyr::pivot_longer(-.row_id, names_to = "feature", values_to = "shap")
       
+      shap_tbl$.fold <- k
       shap_all[[k]] <- shap_tbl
+      shap_t1 <- Sys.time()
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1, shap_t0, shap_t1)
+    } else {
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1)
     }
   }
   
@@ -1013,10 +1073,7 @@ coxnet_cindex_cv5 <- function(
   res <- summarize_cv(
     model_name  = method_name,
     method_name = "CoxNet",
-    cv_res = list(
-      data = df, preds = preds, reverse = TRUE,
-      K = K, fold_id = fold_id, c_folds = c_folds
-    ),
+    cv_res = list(data = df, preds = preds, reverse = TRUE, K = K, fold_id = fold_id, c_folds = c_folds),
     event_col = event_col, time_col = time_col
   )
   message(sprintf("[CoxNet] %s: done. CV%d C = %.3f", method_name, K, c_overall))
@@ -1042,6 +1099,11 @@ coxnet_cindex_cv5 <- function(
     attr(res, "shap_agg")  <- shap_agg
   }
   
+  # attach timing
+  attr(res, "timings") <- timings |> purrr::compact() |> dplyr::bind_rows()
+  attr(res, "runtime_sec") <- as.numeric(difftime(Sys.time(), t_all_start, units = "secs"))
+  
+  attr(res, "oof") <- make_oof(df, preds, fold_id, event_col, time_col)
   return(res)
 }
 
@@ -1066,6 +1128,17 @@ catboost_bin_cindex_cv5 <- function(
   feat_cols <- setdiff(names(df), c(event_col, time_col))
   shap_all <- if (isTRUE(shap)) list() else NULL
   
+  # timings
+  t_all_start <- Sys.time()
+  timings <- list()
+  add_timing <- function(k, fit_t0, fit_t1, shap_t0 = NA, shap_t1 = NA) {
+    fit_sec  <- as.numeric(difftime(fit_t1, fit_t0, units = "secs"))
+    shap_sec <- if (is.na(shap_t0) || is.na(shap_t1)) NA_real_
+    else as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+    tibble::tibble(fold = k, fit_sec = fit_sec, shap_sec = shap_sec,
+                   total_sec = fit_sec + ifelse(is.na(shap_sec), 0, shap_sec))
+  }
+  
   for (k in seq_len(K)) {
     if (shap_verbose) message(sprintf("[CatBoost][%s] fold %d/%d: fit + predict%s",
                                       method_name, k, K, if (shap) " + SHAP" else ""))
@@ -1079,19 +1152,25 @@ catboost_bin_cindex_cv5 <- function(
     xtr0[] <- lapply(xtr0, function(v) if (is.character(v) || is.logical(v)) factor(v) else v)
     xte0[] <- lapply(xte0, function(v) if (is.character(v) || is.logical(v)) factor(v) else v)
     
+    # keep all rows
     cc_tr <- rep(TRUE, nrow(xtr0))
     cc_te <- rep(TRUE, nrow(xte0))
-    xtr <- xtr0
-    xte <- xte0
-    train <- train0
-    test  <- test0
+    xtr <- xtr0; xte <- xte0
+    train <- train0; test <- test0
     
+    # align factor levels
     for (nm in intersect(names(xtr), names(xte))) {
       if (is.factor(xtr[[nm]])) xte[[nm]] <- factor(xte[[nm]], levels = levels(xtr[[nm]]))
     }
     xte <- xte[, names(xtr), drop = FALSE]
     
-    if (nrow(xtr) < 2L || nrow(xte) == 0L) next
+    if (nrow(xtr) < 2L || nrow(xte) == 0L) {
+      timings[[k]] <- tibble::tibble(fold = k, fit_sec = NA_real_, shap_sec = NA_real_, total_sec = NA_real_)
+      next
+    }
+    
+    # timing: fit start
+    fit_t0 <- Sys.time()
     
     ytr <- as.integer(train[[event_col]])
     pool_tr <- catboost::catboost.load_pool(xtr, label = ytr)
@@ -1113,8 +1192,13 @@ catboost_bin_cindex_cv5 <- function(
     
     preds[te][cc_te] <- as.numeric(catboost::catboost.predict(fit, pool_te, prediction_type = "Probability"))
     
-    # SHAP via fastshap
+    # timing: fit end
+    fit_t1 <- Sys.time()
+    
+    # SHAP
     if (isTRUE(shap)) {
+      shap_t0 <- Sys.time()
+      
       bg <- xtr
       if (nrow(bg) > shap_bg_max) bg <- bg[sample.int(nrow(bg), shap_bg_max), , drop = FALSE]
       bg <- bg[, names(xtr), drop = FALSE]
@@ -1150,7 +1234,13 @@ catboost_bin_cindex_cv5 <- function(
         dplyr::mutate(.row_id = which(te)[cc_te]) %>%
         tidyr::pivot_longer(-.row_id, names_to = "feature", values_to = "shap")
       
+      shap_tbl$.fold <- k
       shap_all[[k]] <- shap_tbl
+      
+      shap_t1 <- Sys.time()
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1, shap_t0, shap_t1)
+    } else {
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1)
     }
   }
   
@@ -1160,12 +1250,7 @@ catboost_bin_cindex_cv5 <- function(
     function(k) {
       idx <- (fold_id == k) & is.finite(preds)
       if (!any(idx)) return(NA_real_)
-      harrell_c(
-        df[[time_col]][idx],
-        df[[event_col]][idx],
-        preds[idx],
-        reverse = TRUE
-      )
+      harrell_c(df[[time_col]][idx], df[[event_col]][idx], preds[idx], reverse = TRUE)
     },
     numeric(1)
   )
@@ -1173,13 +1258,11 @@ catboost_bin_cindex_cv5 <- function(
   # overall C
   idx_all <- is.finite(preds)
   c_overall <- if (any(idx_all)) harrell_c(df[[time_col]][idx_all], df[[event_col]][idx_all], preds[idx_all], reverse = TRUE) else NA_real_
+  
   res <- summarize_cv(
     model_name = method_name,
     method_name = "CatBoost",
-    cv_res = list(
-      data = df, preds = preds, reverse = TRUE,
-      K = K, fold_id = fold_id, c_folds = c_folds
-    ),
+    cv_res = list(data = df, preds = preds, reverse = TRUE, K = K, fold_id = fold_id, c_folds = c_folds),
     event_col = event_col, time_col = time_col
   )
   message(sprintf("[CatBoost Bin] %s: done. CV%d C = %.3f", method_name, K, c_overall))
@@ -1187,9 +1270,7 @@ catboost_bin_cindex_cv5 <- function(
   # attach SHAP
   if (isTRUE(shap)) {
     shap_all <- lapply(shap_all, tibble::as_tibble)
-    shap_long <- dplyr::bind_rows(shap_all) %>%
-      dplyr::mutate(model_key = "catboost", transform = method_name)
-    
+    shap_long <- dplyr::bind_rows(shap_all) %>% dplyr::mutate(model_key = "catboost", transform = method_name)
     shap_agg <- shap_long %>%
       dplyr::group_by(model_key, transform, feature) %>%
       dplyr::summarise(
@@ -1200,13 +1281,18 @@ catboost_bin_cindex_cv5 <- function(
       dplyr::group_by(model_key, transform) %>%
       dplyr::mutate(rel_abs = mean_abs / pmax(sum(mean_abs), .Machine$double.eps)) %>%
       dplyr::ungroup()
-    
     attr(res, "shap_long") <- shap_long
     attr(res, "shap_agg")  <- shap_agg
   }
   
+  # attach timings
+  attr(res, "timings") <- timings |> purrr::compact() |> dplyr::bind_rows()
+  attr(res, "runtime_sec") <- as.numeric(difftime(Sys.time(), t_all_start, units = "secs"))
+
+  attr(res, "oof") <- make_oof(df, preds, fold_id, event_col, time_col)
   return(res)
 }
+
 
 
 # XGBoost Cox: inner-grid once, then K-fold CV + SHAP
@@ -1227,6 +1313,17 @@ xgb_cox_cindex_cv5_grid_tune_once <- function(
 ) {
   message(sprintf("[XGB] %s: starting %d-fold CV", method_name, K))
   set.seed(seed)
+  
+  # timing
+  t_all_start <- Sys.time()
+  timings <- list()
+  add_timing <- function(k, fit_t0, fit_t1, shap_t0 = NA, shap_t1 = NA) {
+    fit_sec  <- as.numeric(difftime(fit_t1, fit_t0, units = "secs"))
+    shap_sec <- if (is.na(shap_t0) || is.na(shap_t1)) NA_real_
+    else as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+    tibble::tibble(fold = k, fit_sec = fit_sec, shap_sec = shap_sec,
+                   total_sec = fit_sec + ifelse(is.na(shap_sec), 0, shap_sec))
+  }
   
   # inner data for tuning
   x_df <- df[, setdiff(names(df), c(time_col, event_col)), drop = FALSE]
@@ -1353,7 +1450,13 @@ xgb_cox_cindex_cv5_grid_tune_once <- function(
     train  <- train0
     test   <- test0
     
-    if (nrow(xtr_df) < 2L || nrow(xte_df) == 0L) next
+    if (nrow(xtr_df) < 2L || nrow(xte_df) == 0L) {
+      timings[[k]] <- tibble::tibble(fold = k, fit_sec = NA_real_, shap_sec = NA_real_, total_sec = NA_real_)
+      next
+    }
+    
+    # timing: fit start
+    fit_t0 <- Sys.time()
     
     MM_all <- mm_train_test(xtr_df, xte_df)
     Xtr    <- MM_all$Xtr
@@ -1390,8 +1493,12 @@ xgb_cox_cindex_cv5_grid_tune_once <- function(
     
     preds[te][cc_te] <- as.numeric(predict(bst, dte))
     
-    # SHAP via fastshap
+    # timing: fit end
+    fit_t1 <- Sys.time()
+    
+    # SHAP
     if (isTRUE(shap)) {
+      shap_t0 <- Sys.time()
       bg_raw <- xtr_df
       if (nrow(bg_raw) > shap_bg_max)
         bg_raw <- bg_raw[sample.int(nrow(bg_raw), shap_bg_max), , drop = FALSE]
@@ -1427,7 +1534,12 @@ xgb_cox_cindex_cv5_grid_tune_once <- function(
         dplyr::mutate(.row_id = which(te)[cc_te]) %>%
         tidyr::pivot_longer(-.row_id, names_to = "feature", values_to = "shap")
       
+      shap_tbl$.fold <- k
       shap_all[[k]] <- shap_tbl
+      shap_t1 <- Sys.time()
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1, shap_t0, shap_t1)
+    } else {
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1)
     }
   }
   
@@ -1481,8 +1593,14 @@ xgb_cox_cindex_cv5_grid_tune_once <- function(
     attr(res, "shap_agg")  <- shap_agg
   }
   
+  # attach timing
+  attr(res, "timings") <- timings |> purrr::compact() |> dplyr::bind_rows()
+  attr(res, "runtime_sec") <- as.numeric(difftime(Sys.time(), t_all_start, units = "secs"))
+  
+  attr(res, "oof") <- make_oof(df, preds, fold_id, event_col, time_col)
   return(res)
 }
+
 
 
 # TabPFN: init helper
@@ -1534,6 +1652,17 @@ tabpfn_bin_cindex_cv5 <- function(
   feat_cols <- setdiff(names(df), c(event_col, time_col))
   shap_all <- if (isTRUE(shap)) list() else NULL
   
+  # timing
+  t_all_start <- Sys.time()
+  timings <- list()
+  add_timing <- function(k, fit_t0, fit_t1, shap_t0 = NA, shap_t1 = NA) {
+    fit_sec  <- as.numeric(difftime(fit_t1, fit_t0, units = "secs"))
+    shap_sec <- if (is.na(shap_t0) || is.na(shap_t1)) NA_real_
+    else as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+    tibble::tibble(fold = k, fit_sec = fit_sec, shap_sec = shap_sec,
+                   total_sec = fit_sec + ifelse(is.na(shap_sec), 0, shap_sec))
+  }
+  
   fit_imp <- function(d) {
     is_num <- vapply(d, is.numeric, TRUE)
     list(
@@ -1545,13 +1674,8 @@ tabpfn_bin_cindex_cv5 <- function(
   }
   apply_imp <- function(d, imp) {
     out <- d
-    for (nm in imp$num_cols) {
-      v <- out[[nm]]; v[!is.finite(v)] <- NA; v[is.na(v)] <- imp$num_med[[nm]]; out[[nm]] <- v
-    }
-    for (nm in imp$cat_cols) {
-      out[[nm]] <- addNA(as.factor(out[[nm]]), ifany = TRUE)
-      out[[nm]] <- factor(out[[nm]], levels = imp$cat_lvls[[nm]])
-    }
+    for (nm in imp$num_cols) { v <- out[[nm]]; v[!is.finite(v)] <- NA; v[is.na(v)] <- imp$num_med[[nm]]; out[[nm]] <- v }
+    for (nm in imp$cat_cols) { out[[nm]] <- addNA(as.factor(out[[nm]]), ifany = TRUE); out[[nm]] <- factor(out[[nm]], levels = imp$cat_lvls[[nm]]) }
     out
   }
   
@@ -1563,7 +1687,6 @@ tabpfn_bin_cindex_cv5 <- function(
     train0 <- df[tr, , drop = FALSE]
     test0  <- df[te, , drop = FALSE]
     
-    # one-hot + align on complete cases only (features)
     xtr_df0 <- train0[, feat_cols, drop = FALSE]
     xte_df0 <- test0[,  feat_cols, drop = FALSE]
     cc_tr <- rep(TRUE, nrow(xtr_df0))
@@ -1573,7 +1696,13 @@ tabpfn_bin_cindex_cv5 <- function(
     train  <- train0
     test   <- test0
     
-    if (nrow(xtr_df) < 2L || nrow(xte_df) == 0L) next
+    if (nrow(xtr_df) < 2L || nrow(xte_df) == 0L) {
+      timings[[k]] <- tibble::tibble(fold = k, fit_sec = NA_real_, shap_sec = NA_real_, total_sec = NA_real_)
+      next
+    }
+    
+    # timing: fit start
+    fit_t0 <- Sys.time()
     
     imp <- fit_imp(xtr_df)
     xtr_imp <- apply_imp(xtr_df, imp)
@@ -1598,8 +1727,12 @@ tabpfn_bin_cindex_cv5 <- function(
     p1 <- if (is.matrix(p) && ncol(p) >= 2) p[, 2] else as.numeric(p)
     preds[te][cc_te] <- as.numeric(p1)
     
+    # timing: fit end
+    fit_t1 <- Sys.time()
+    
     # SHAP
     if (isTRUE(shap)) {
+      shap_t0 <- Sys.time()
       bg_raw <- xtr_df
       if (nrow(bg_raw) > shap_bg_max)
         bg_raw <- bg_raw[sample.int(nrow(bg_raw), shap_bg_max), , drop = FALSE]
@@ -1636,7 +1769,12 @@ tabpfn_bin_cindex_cv5 <- function(
         dplyr::mutate(.row_id = which(te)[cc_te]) %>%
         tidyr::pivot_longer(-.row_id, names_to = "feature", values_to = "shap")
       
+      shap_tbl$.fold <- k
       shap_all[[k]] <- shap_tbl
+      shap_t1 <- Sys.time()
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1, shap_t0, shap_t1)
+    } else {
+      timings[[k]] <- add_timing(k, fit_t0, fit_t1)
     }
   }
   
@@ -1689,9 +1827,13 @@ tabpfn_bin_cindex_cv5 <- function(
     attr(res, "shap_agg")  <- shap_agg
   }
   
+  # attach timings
+  attr(res, "timings") <- timings |> purrr::compact() |> dplyr::bind_rows()
+  attr(res, "runtime_sec") <- as.numeric(difftime(Sys.time(), t_all_start, units = "secs"))
+  
+  attr(res, "oof") <- make_oof(df, preds, fold_id, event_col, time_col)
   return(res)
 }
-
 
 
 # PERMANOVA
@@ -1718,6 +1860,17 @@ permanova_r2_cv5 <- function(
   set.seed(seed)
   
   msg <- function(...) if (isTRUE(messages)) message(sprintf(...))
+  
+  # timing
+  t_all_start <- Sys.time()
+  timings <- vector("list", K)
+  add_timing <- function(k, fit_t0, fit_t1, shap_t0 = NA, shap_t1 = NA){
+    fit_sec  <- as.numeric(difftime(fit_t1, fit_t0, units = "secs"))
+    shap_sec <- if (is.na(shap_t0) || is.na(shap_t1)) NA_real_
+    else as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+    tibble::tibble(fold = k, fit_sec = fit_sec, shap_sec = shap_sec,
+                   total_sec = fit_sec + ifelse(is.na(shap_sec), 0, shap_sec))
+  }
   
   # Harmonize matrix columns
   harmonize_matrix <- function(M) {
@@ -1751,7 +1904,7 @@ permanova_r2_cv5 <- function(
     }
   }
   
-  # Feature set (exclude time/event and .fold)
+  # Feature set
   feat_cols_all <- setdiff(names(df), c(event_col, time_col, ".fold"))
   
   # Compute R^2 for a subset
@@ -1767,7 +1920,7 @@ permanova_r2_cv5 <- function(
     as.numeric(fit$R2[rr])
   }
   
-  # Build folds (stratified 0/1)
+  # Folds (stratified 0/1)
   n <- nrow(df)
   if (!is.null(fold_id) && length(fold_id) != n) stop("'fold_id' length must equal nrow(df).")
   if (is.null(fold_id)) {
@@ -1781,55 +1934,81 @@ permanova_r2_cv5 <- function(
   
   msg("[PERMANOVA][%s] Start CV (K=%d, run_on=%s, metric=%s, harmonize=%s)", method_name, K, run_on, metric, harmonize)
   
-  # Fold-wise R^2 on train/test
-  fold_tbl <- lapply(seq_len(K), function(k){
+  # Fold-wise R^2 (+fit timing)
+  fold_rows <- vector("list", K)
+  for (k in seq_len(K)) {
+    fit_t0 <- Sys.time()
     idx <- if (run_on == "train") df$.fold != k else df$.fold == k
     dfk <- df[idx, , drop = FALSE]
-    if (nrow(dfk) < 10 || length(unique(dfk[[group_col]])) < 2)
-      return(data.frame(model = method_name, method = "PERMANOVA", fold = k, R2 = NA_real_))
+    if (nrow(dfk) < 10 || length(unique(dfk[[group_col]])) < 2) {
+      fold_rows[[k]] <- data.frame(model = method_name, method = "PERMANOVA", fold = k, R2 = NA_real_)
+      timings[[k]] <- add_timing(k, fit_t0, Sys.time())
+      next
+    }
     R2 <- tryCatch(compute_r2(dfk), error = function(e) NA_real_)
-    data.frame(model = method_name, method = "PERMANOVA", fold = k, R2 = R2)
-  }) %>% dplyr::bind_rows() %>% dplyr::filter(is.finite(R2))
+    fit_t1 <- Sys.time()
+    fold_rows[[k]] <- data.frame(model = method_name, method = "PERMANOVA", fold = k, R2 = R2)
+    timings[[k]] <- add_timing(k, fit_t0, fit_t1)
+  }
+  fold_tbl <- dplyr::bind_rows(fold_rows) %>% dplyr::filter(is.finite(R2))
   
-  # Shapley for overall R^2 (no .row_id, exclude .fold)
+  # Shapley per fold (+shap timing)
   shap_long_tbl <- shap_agg_tbl <- NULL
   if (isTRUE(shapley)) {
     msg("[PERMANOVA][%s] Shapley: M=%d, pmax=%d", method_name, shapley_M, shapley_pmax)
-    X <- df[, feat_cols_all, drop = FALSE]
-    if (!is.matrix(X) || !all(vapply(X, is.numeric, logical(1)))) X <- stats::model.matrix(~ . - 1, data = X)
-    X[is.na(X)] <- 0
-    Xh <- harmonize_matrix(X)
-    grp <- factor(df[[group_col]])
-    feat_names <- colnames(Xh); if (is.null(feat_names)) feat_names <- paste0("V", seq_len(ncol(Xh)))
-    
-    r2_subset <- function(cols){
-      if (length(cols) == 0) return(0)
-      Dsub <- make_dist(Xh[, cols, drop = FALSE])
-      fit  <- vegan::adonis2(Dsub ~ grp, permutations = permutations, by = "terms")
-      rr <- which(rownames(fit) %in% c("grp","grp ")); if (length(rr) != 1L) rr <- 1L
-      as.numeric(fit$R2[rr])
-    }
-    
-    contr_list <- vector("list", shapley_M)
-    for (m in seq_len(shapley_M)) {
-      p <- ncol(Xh)
-      idx_sub <- if (p > shapley_pmax) sort(sample.int(p, shapley_pmax)) else seq_len(p)
-      ord <- sample(idx_sub, length(idx_sub), replace = FALSE)
-      prev <- integer(0); prev_r2 <- 0
-      rows <- vector("list", length(ord))
-      for (i in seq_along(ord)) {
-        j <- ord[i]
-        cur <- c(prev, j)
-        cur_r2 <- r2_subset(cur)
-        rows[[i]] <- data.frame(feature = feat_names[j], shap = cur_r2 - prev_r2)
-        prev <- cur; prev_r2 <- cur_r2
+    per_fold_shap <- vector("list", K)
+    for (k in seq_len(K)) {
+      shap_t0 <- Sys.time()
+      idx <- if (run_on == "train") df$.fold != k else df$.fold == k
+      dfk <- df[idx, , drop = FALSE]
+      if (nrow(dfk) < 10 || length(unique(dfk[[group_col]])) < 2) {
+        per_fold_shap[[k]] <- NULL
+        shap_t1 <- Sys.time()
+        # update timing row to include shap
+        timings[[k]]$shap_sec  <- as.numeric(difftime(shap_t1, shap_t0, units = "secs")) * NA_real_
+        timings[[k]]$total_sec <- timings[[k]]$fit_sec
+        next
       }
-      contr_list[[m]] <- dplyr::bind_rows(rows)
+      X <- dfk[, feat_cols_all, drop = FALSE]
+      if (!is.matrix(X) || !all(vapply(X, is.numeric, logical(1)))) X <- stats::model.matrix(~ . - 1, data = X)
+      X[is.na(X)] <- 0
+      Xh <- harmonize_matrix(X)
+      grp <- factor(dfk[[group_col]])
+      feat_names <- colnames(Xh); if (is.null(feat_names)) feat_names <- paste0("V", seq_len(ncol(Xh)))
+      
+      r2_subset <- function(cols){
+        if (length(cols) == 0) return(0)
+        Dsub <- make_dist(Xh[, cols, drop = FALSE])
+        fit  <- vegan::adonis2(Dsub ~ grp, permutations = permutations, by = "terms")
+        rr <- which(rownames(fit) %in% c("grp","grp ")); if (length(rr) != 1L) rr <- 1L
+        as.numeric(fit$R2[rr])
+      }
+      
+      contr_list <- vector("list", shapley_M)
+      for (m in seq_len(shapley_M)) {
+        p <- ncol(Xh)
+        idx_sub <- if (p > shapley_pmax) sort(sample.int(p, shapley_pmax)) else seq_len(p)
+        ord <- sample(idx_sub, length(idx_sub), replace = FALSE)
+        prev <- integer(0); prev_r2 <- 0
+        rows <- vector("list", length(ord))
+        for (i in seq_along(ord)) {
+          j <- ord[i]
+          cur <- c(prev, j)
+          cur_r2 <- r2_subset(cur)
+          rows[[i]] <- data.frame(feature = feat_names[j], shap = cur_r2 - prev_r2)
+          prev <- cur; prev_r2 <- cur_r2
+        }
+        contr_list[[m]] <- dplyr::bind_rows(rows)
+      }
+      per_fold_shap[[k]] <- dplyr::bind_rows(contr_list) %>%
+        dplyr::mutate(model_key = "permanova", transform = method_name, .fold = k, .before = 1) %>%
+        dplyr::relocate(model_key, transform, .fold, feature, shap)
+      shap_t1 <- Sys.time()
+      # update timing row to include shap
+      timings[[k]]$shap_sec  <- as.numeric(difftime(shap_t1, shap_t0, units = "secs"))
+      timings[[k]]$total_sec <- timings[[k]]$fit_sec + timings[[k]]$shap_sec
     }
-    shap_long_tbl <- dplyr::bind_rows(contr_list) %>%
-      dplyr::mutate(model_key = "permanova", transform = method_name, .before = 1) %>%
-      dplyr::relocate(model_key, transform, feature, shap)
-    
+    shap_long_tbl <- per_fold_shap %>% purrr::compact() %>% dplyr::bind_rows()
     shap_agg_tbl <- shap_long_tbl %>%
       dplyr::group_by(model_key, transform, feature) %>%
       dplyr::summarise(
@@ -1842,7 +2021,7 @@ permanova_r2_cv5 <- function(
       dplyr::ungroup()
   }
   
-  # CV summary (no n_folds in output)
+  # CV summary
   m <- nrow(fold_tbl)
   if (isTRUE(is.finite(m)) && m >= 2) {
     est <- mean(fold_tbl$R2, na.rm = TRUE)
@@ -1872,6 +2051,9 @@ permanova_r2_cv5 <- function(
   attr(res, "foldR2")  <- tibble::as_tibble(fold_tbl)
   if (!is.null(shap_long_tbl)) attr(res, "shap_long") <- shap_long_tbl
   if (!is.null(shap_agg_tbl))  attr(res, "shap_agg")  <- shap_agg_tbl
+  # timings
+  attr(res, "timings") <- timings |> purrr::compact() |> dplyr::bind_rows()
+  attr(res, "runtime_sec") <- as.numeric(difftime(Sys.time(), t_all_start, units = "secs"))
   
   msg("[PERMANOVA][%s] Done. CV mean R2=%.4f (95%% CI %.4f–%.4f)", method_name, est, lo, hi)
   res
