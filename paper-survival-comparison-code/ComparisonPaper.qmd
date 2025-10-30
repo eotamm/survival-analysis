@@ -585,6 +585,8 @@ print(p_sig_lra)
 
 ### Plot 7
 
+LRA excluded as it has different features
+
 ```{r fig-shapcor, fig.width=10, fig.height=6, dpi=300, fig.cap="Shapley correlation", fig.path="figures/"}
 # ---- SHAP correlation heatmap with significance stars (p ≤ 0.05) ----
 # - x: transform, y: transform
@@ -595,16 +597,18 @@ print(p_sig_lra)
 corr_method <- "spearman"   # "pearson" or "spearman"
 alpha_star  <- 0.05
 
+# Exclude LRA
 shap_agg_all <- shap_long_all %>%
+  dplyr::filter(!grepl("^lra$", transform, ignore.case = TRUE)) %>%
   dplyr::group_by(model_key, transform, feature) %>%
   dplyr::summarise(mean_abs = mean(abs(shap), na.rm = TRUE), .groups = "drop")
 
-# Order transforms by overall importance (sum of mean_abs across models & features)
+# Order transforms by overall importance
 t_order <- shap_agg_all %>%
-  group_by(transform) %>%
-  summarise(total_imp = sum(mean_abs, na.rm = TRUE), .groups = "drop") %>%
-  arrange(desc(total_imp)) %>%
-  pull(transform)
+  dplyr::group_by(transform) %>%
+  dplyr::summarise(total_imp = sum(mean_abs, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::arrange(dplyr::desc(total_imp)) %>%
+  dplyr::pull(transform)
 
 # Function: per-model pairwise transform correlations + Wilcoxon test on differences
 one_model_corr <- function(df_model) {
@@ -676,7 +680,6 @@ ggplot(corr_all, aes(x = t2, y = t1, fill = cor)) +
     panel.grid = element_blank(),
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
-
 ```
 
 
@@ -926,56 +929,6 @@ print(p_sub)
 
 
 ```{r fig-time, fig.width=10, fig.height=6, dpi=300, fig.cap="Timings", fig.path="figures/"}
-# ---- Computation time heatmap (minutes, linear) ----
-# - x: transform
-# - y: model
-# - fill: runtime (minutes)
-
-rt <- runtime_all %>%
-  filter(is.finite(runtime_sec)) %>%
-  mutate(
-    runtime_min = runtime_sec / 60,
-    method      = factor(method),
-    transform   = factor(transform)
-  )
-
-# Order: Slowest first by median
-method_order <- rt %>%
-  group_by(method) %>% summarise(mu = median(runtime_min, na.rm = TRUE), .groups = "drop") %>%
-  arrange(desc(mu)) %>% pull(method)
-
-transform_order <- rt %>%
-  group_by(transform) %>% summarise(mu = median(runtime_min, na.rm = TRUE), .groups = "drop") %>%
-  arrange(desc(mu)) %>% pull(transform)
-
-rt <- rt %>%
-  mutate(
-    method    = factor(method, levels = method_order),
-    transform = factor(transform, levels = transform_order)
-  )
-
-# Plot
-p_time <- ggplot(rt, aes(x = transform, y = method, fill = runtime_min)) +
-  geom_tile(color = "white", linewidth = 0.25) +
-  scale_fill_viridis_c(name = "Minutes",
-                       labels = label_number(accuracy = 0.1)) +
-  labs(
-    title = "Computation time by model and transform",
-    x = "Transform", y = "Model"
-  ) +
-  theme_bw() +
-  theme(
-    legend.position = "right",
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 30, hjust = 1)
-  )
-
-print(p_time)
-```
-
-
-
-```{r}
 # ---- Computation time heatmap (minutes) ----
 # - x: transform, y: model
 # - fill: runtime (minutes)
