@@ -60,8 +60,8 @@ All data preprocessing was carried out in a separate script (`data.R`) to ensure
 
 ```{r, include=FALSE}
 # Download the data preprocessing
-source("funcs2.R")
-source("data2.R")
+source("funcs.R")
+source("data.R")
 ```
 
 ## Data transformations
@@ -898,4 +898,5 @@ ggplot(km_df, aes(x = time, y = surv, color = RiskGroup, fill = RiskGroup)) +
   theme(plot.title = element_text(hjust = 0.5, face = "bold"),
         panel.spacing.x = unit(0.8, "lines"))
 ```
+
 
